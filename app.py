@@ -9,7 +9,7 @@ app = Flask(__name__)
 # =====================================================================
 app.secret_key = "troque_essa_chave_por_uma_frase_aleatoria_qualquer"
 SENHA_ADMIN = "22041988"                # Senha para acessar /admin
-SUA_CHAVE_PIX = "03019260183"   # Sua chave Pix (CPF, E-mail ou Aleatória)
+SUA_CHAVE_PIX = "997ef3d7-4a1c-436f-b4fa-2c668ad2478"   # Sua chave Pix (CPF, E-mail ou Aleatória)
 SEU_WHATSAPP = "5544998258119"        # Seu WhatsApp com 55 + DDD + Número (só números)
 VALOR_DESTAQUE = "R$ 19,90"           # Valor cobrado por 30 dias no topo
 DIAS_DESTAQUE = 30                    # Duração do plano VIP
