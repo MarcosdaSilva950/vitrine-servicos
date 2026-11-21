@@ -9,12 +9,17 @@ app = Flask(__name__)
 # =====================================================================
 # CONFIGURAÇÕES INICIAIS (SUAS CREDENCIAIS)
 # =====================================================================
-app.secret_key = "chave_secreta_vitrine_marcao_2026_pro"
+app.secret_key = "chave_secreta_vitrine_marcao_2026_pro_max"
 SENHA_ADMIN = "22041988"
+
+# IMPORTANTE: Coloque aqui sua chave aleatória completa (36 caracteres) ou CPF/E-mail
 PIX_PADRAO = "997ef3d7-4a1c-436f-b4fa-2c668ad2478c"
 WPP_PADRAO = "5544998258119"
-VALOR_PADRAO = "R$ 19,90"
-DIAS_PADRAO = "30"
+
+VALOR_30D_PADRAO = "R$ 19,90"
+VALOR_90D_PADRAO = "R$ 44,90"
+LIMITE_VAGAS_VIP = 4
+SENHA_CLIENTES_VIP_PADRAO = "VIP2026"
 # =====================================================================
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -87,6 +92,17 @@ def init_db():
         )
     """)
     db.execute("""
+        CREATE TABLE IF NOT EXISTS pedidos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente_nome TEXT NOT NULL,
+            categoria TEXT NOT NULL,
+            cidade TEXT NOT NULL,
+            descricao TEXT NOT NULL,
+            whatsapp TEXT NOT NULL,
+            criado_em TEXT NOT NULL
+        )
+    """)
+    db.execute("""
         CREATE TABLE IF NOT EXISTS config (
             chave TEXT PRIMARY KEY,
             valor TEXT NOT NULL
@@ -95,12 +111,13 @@ def init_db():
     padroes = {
         "chave_pix": PIX_PADRAO,
         "seu_whatsapp": WPP_PADRAO,
-        "valor_destaque": VALOR_PADRAO,
-        "dias_destaque": DIAS_PADRAO,
+        "valor_30d": VALOR_30D_PADRAO,
+        "valor_90d": VALOR_90D_PADRAO,
+        "senha_vip_clientes": SENHA_CLIENTES_VIP_PADRAO,
         "banner_ativo": "1",
         "banner_titulo": "Espaço Reservado para Patrocinador Local",
-        "banner_texto": "Divulgue sua loja ou empresa aqui para milhares de clientes da região! Clique para anunciar.",
-        "banner_link": f"https://wa.me/{WPP_PADRAO}?text=Olá!%20Tenho%20interesse%20no%20espaço%20de%20patrocinador%20da%20Vitrine%20de%20Serviços."
+        "banner_texto": "Divulgue sua loja ou empresa aqui para milhares de clientes de Formosa, Assis e região!",
+        "banner_link": f"https://wa.me/{WPP_PADRAO}?text=Olá!%20Tenho%20interesse%20no%20espaço%20de%20patrocinador%20do%20Guia%20de%20Serviços."
     }
     for k, v in padroes.items():
         db.execute("INSERT OR IGNORE INTO config (chave, valor) VALUES (?, ?)", (k, v))
@@ -121,15 +138,11 @@ def formatar_whatsapp(contato):
         return f"https://wa.me/{numeros}"
     return None
 
-# =====================================================================
-# GERADOR DE CÓDIGO PIX COPIA E COLA (BR CODE) COM VALOR FIXADO
-# =====================================================================
 def gerar_pix_copia_cola(chave_pix, valor_texto, txid="VITRINEVIP"):
     """Gera o payload oficial EMV/BR Code do Banco Central com valor travado."""
     def emv(tag, val):
         return f"{tag}{len(val):02d}{val}"
 
-    # Extrai o valor numérico de textos como "R$ 19,90" -> "19.90"
     limpo = re.sub(r"[^\d,\.]", "", valor_texto).replace(",", ".")
     try:
         valor_float = float(limpo)
@@ -145,13 +158,12 @@ def gerar_pix_copia_cola(chave_pix, valor_texto, txid="VITRINEVIP"):
         emv("53", "986") +
         emv("54", valor_str) +
         emv("58", "BR") +
-        emv("59", "VITRINE SERVICOS") +
+        emv("59", "GUIA SERVICOS") +
         emv("60", "BRASIL") +
         emv("62", emv("05", re.sub(r"[^a-zA-Z0-9]", "", txid)[:20] or "VIP")) +
         "6304"
     )
 
-    # Cálculo CRC16-CCITT (0xFFFF) exigido pelo padrão Pix
     crc = 0xFFFF
     for char in payload:
         crc ^= ord(char) << 8
@@ -174,6 +186,8 @@ HTML_BASE_CSS = """
         --secondary: #1e293b;
         --accent: #16a34a;
         --accent-hover: #15803d;
+        --blue-cta: #2563eb;
+        --blue-cta-hover: #1d4ed8;
         --vip: #f59e0b;
         --vip-dark: #d97706;
         --bg: #f1f5f9;
@@ -196,6 +210,8 @@ HTML_BASE_CSS = """
         display: flex;
         justify-content: space-between;
         align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
     }
     .top-bar a { color: #cbd5e1; text-decoration: none; margin-left: 15px; font-weight: 500; }
     .top-bar a:hover { color: white; }
@@ -203,24 +219,36 @@ HTML_BASE_CSS = """
     header {
         background: linear-gradient(135deg, #0f172a 0%, #1e3a8a 100%);
         color: white;
-        padding: 35px 20px;
+        padding: 36px 20px 28px 20px;
         text-align: center;
     }
+    .region-pill {
+        display: inline-block;
+        background: rgba(255, 255, 255, 0.14);
+        color: #93c5fd;
+        font-size: 12px;
+        font-weight: 700;
+        padding: 4px 12px;
+        border-radius: 20px;
+        margin-bottom: 10px;
+        letter-spacing: 0.4px;
+    }
     header h1 { margin: 0 0 10px 0; font-size: 32px; letter-spacing: -0.5px; }
-    header p { margin: 0 auto 22px auto; color: #e2e8f0; font-size: 16px; max-width: 600px; }
+    header p { margin: 0 auto 22px auto; color: #e2e8f0; font-size: 16px; max-width: 640px; }
 
     .cta-hero-group {
         display: flex;
         gap: 12px;
         justify-content: center;
         flex-wrap: wrap;
+        margin-bottom: 22px;
     }
     .btn-hero {
         background: var(--accent);
         color: white;
         border: none;
-        padding: 14px 26px;
-        font-size: 16px;
+        padding: 14px 24px;
+        font-size: 15px;
         font-weight: bold;
         border-radius: 8px;
         cursor: pointer;
@@ -232,17 +260,37 @@ HTML_BASE_CSS = """
         gap: 8px;
     }
     .btn-hero:hover { background: var(--accent-hover); transform: translateY(-1px); }
+    .btn-hero-blue {
+        background: var(--blue-cta);
+        box-shadow: 0 4px 14px rgba(37, 99, 235, 0.4);
+    }
+    .btn-hero-blue:hover { background: var(--blue-cta-hover); }
 
-    .container { max-width: 1120px; margin: 25px auto; padding: 0 20px; }
+    /* Barra de Prova Social Viva */
+    .social-proof-bar {
+        display: flex;
+        justify-content: center;
+        gap: 20px;
+        flex-wrap: wrap;
+        font-size: 13px;
+        color: #cbd5e1;
+        border-top: 1px solid rgba(255,255,255,0.12);
+        padding-top: 14px;
+        max-width: 800px;
+        margin: 0 auto;
+    }
+    .social-proof-bar strong { color: #4ade80; }
+
+    .container { max-width: 1140px; margin: 24px auto; padding: 0 20px; }
 
     /* Banner Patrocinador */
     .sponsor-banner {
         background: linear-gradient(90deg, #1e293b 0%, #334155 100%);
         border-left: 5px solid var(--vip);
         color: white;
-        padding: 16px 22px;
+        padding: 15px 22px;
         border-radius: 10px;
-        margin-bottom: 25px;
+        margin-bottom: 24px;
         display: flex;
         justify-content: space-between;
         align-items: center;
@@ -274,13 +322,61 @@ HTML_BASE_CSS = """
         white-space: nowrap;
     }
 
-    /* Busca e Categorias */
-    .search-wrapper {
+    /* Mural de Clientes Procurando Serviço (Oportunidades) */
+    .leads-section {
+        background: #eff6ff;
+        border: 1px solid #bfdbfe;
+        border-radius: 12px;
+        padding: 20px;
+        margin-bottom: 25px;
+    }
+    .leads-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-bottom: 14px;
+    }
+    .leads-header h3 { margin: 0; color: #1e3a8a; font-size: 18px; display: flex; align-items: center; gap: 8px; }
+    .leads-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(290px, 1fr));
+        gap: 14px;
+    }
+    .lead-card {
         background: white;
         padding: 15px;
+        border-radius: 8px;
+        border-left: 4px solid var(--blue-cta);
+        box-shadow: 0 2px 6px rgba(0,0,0,0.04);
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+    }
+    .lead-meta { font-size: 11px; color: var(--muted); font-weight: 600; margin-bottom: 6px; }
+    .lead-desc { font-size: 13px; color: var(--text); margin: 0 0 12px 0; line-height: 1.4; }
+    .btn-lead-locked {
+        background: #f1f5f9;
+        color: #475569;
+        border: 1px dashed #94a3b8;
+        padding: 8px;
+        border-radius: 6px;
+        font-size: 12px;
+        font-weight: bold;
+        cursor: pointer;
+        text-align: center;
+        width: 100%;
+    }
+    .btn-lead-locked:hover { background: #e2e8f0; color: var(--primary); }
+
+    /* Busca, Cidades e Categorias */
+    .search-wrapper {
+        background: white;
+        padding: 16px;
         border-radius: 10px;
         box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-        margin-bottom: 20px;
+        margin-bottom: 22px;
     }
     .busca-bar { display: flex; gap: 10px; flex-wrap: wrap; }
     .busca-bar input {
@@ -310,11 +406,12 @@ HTML_BASE_CSS = """
     .btn-danger { background-color: #dc2626; padding: 6px 12px; font-size: 12px; }
     .btn-sm { padding: 6px 12px; font-size: 12px; }
 
-    .filtros { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 14px; }
+    .filtros-label { font-size: 12px; font-weight: 700; color: var(--muted); margin: 14px 0 6px 0; text-transform: uppercase; }
+    .filtros { display: flex; gap: 8px; flex-wrap: wrap; }
     .filtro-btn {
         background: #f8fafc;
         border: 1px solid #e2e8f0;
-        padding: 8px 14px;
+        padding: 7px 13px;
         border-radius: 20px;
         text-decoration: none;
         color: #334155;
@@ -326,6 +423,27 @@ HTML_BASE_CSS = """
         background: var(--primary);
         color: white;
         border-color: var(--primary);
+    }
+    .cidade-pill.ativo, .cidade-pill:hover {
+        background: var(--blue-cta);
+        border-color: var(--blue-cta);
+        color: white;
+    }
+
+    /* Faixa de Escassez VIP */
+    .scarcity-bar {
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+        color: #92400e;
+        padding: 10px 16px;
+        border-radius: 8px;
+        margin-bottom: 18px;
+        font-size: 13px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 10px;
     }
 
     /* Grid e Cards de Serviços */
@@ -352,7 +470,7 @@ HTML_BASE_CSS = """
         border: 2px solid var(--vip);
         border-top: 6px solid var(--vip);
         background: linear-gradient(to bottom, #fffdf5, #ffffff);
-        box-shadow: 0 6px 20px rgba(245, 158, 11, 0.2);
+        box-shadow: 0 6px 20px rgba(245, 158, 11, 0.22);
     }
     .card-img-wrapper {
         width: 100%;
@@ -365,7 +483,7 @@ HTML_BASE_CSS = """
     .card-img {
         width: 100%;
         height: auto;
-        max-height: 360px;
+        max-height: 380px;
         object-fit: contain;
         display: block;
     }
@@ -535,6 +653,39 @@ HTML_BASE_CSS = """
         box-shadow: 0 2px 12px rgba(0,0,0,0.08);
         margin-bottom: 25px;
     }
+    .plan-selector {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+        margin: 15px 0;
+    }
+    @media (max-width: 500px) { .plan-selector { grid-template-columns: 1fr; } }
+    .plan-card {
+        border: 2px solid #cbd5e1;
+        border-radius: 10px;
+        padding: 15px;
+        text-decoration: none;
+        color: var(--text);
+        display: block;
+        position: relative;
+        transition: all 0.15s;
+    }
+    .plan-card.active {
+        border-color: var(--vip);
+        background: #fffbeb;
+        box-shadow: 0 4px 12px rgba(245, 158, 11, 0.2);
+    }
+    .plan-tag {
+        position: absolute;
+        top: -10px;
+        right: 10px;
+        background: var(--accent);
+        color: white;
+        font-size: 10px;
+        font-weight: bold;
+        padding: 2px 8px;
+        border-radius: 10px;
+    }
 </style>
 """
 
@@ -544,60 +695,138 @@ HTML_INDEX = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Vitrine de Serviços e Profissionais</title>
+    <title>Guia Regional de Serviços e Profissionais</title>
     """ + HTML_BASE_CSS + """
 </head>
 <body>
 
 <div class="top-bar">
-    <span>Plataforma Regional de Serviços</span>
+    <span>📍 Formosa do Oeste • Assis Chateaubriand • Guaíra e Região</span>
     <div>
         <a href="/">Início</a>
+        {% if vip_desbloqueado %}
+            <a href="/sair_vip" style="color:#fbbf24;">★ Acesso VIP Ativo (Sair)</a>
+        {% else %}
+            <a href="#" onclick="abrirModal('modalAcessoVip'); return false;" style="color:#fbbf24;">🔑 Sou Profissional VIP</a>
+        {% endif %}
         <a href="/admin">Painel Admin</a>
     </div>
 </div>
 
 <header>
-    <h1>Vitrine de Serviços</h1>
-    <p>Contrate profissionais de confiança perto de você ou divulgue seu trabalho gratuitamente em menos de 1 minuto.</p>
+    <span class="region-pill">CONECTANDO QUEM PRECISA A QUEM SABE FAZER</span>
+    <h1>Guia Regional de Serviços</h1>
+    <p>Encontre profissionais de confiança na sua cidade ou divulgue seu trabalho gratuitamente em 1 minuto.</p>
     <div class="cta-hero-group">
         <button onclick="abrirModal('modalCadastro')" class="btn-hero">
             + Divulgar Meu Trabalho Grátis
         </button>
+        <button onclick="abrirModal('modalPedido')" class="btn-hero btn-hero-blue">
+            📢 Pedir Orçamento Urgente
+        </button>
+    </div>
+    <div class="social-proof-bar">
+        <span>✅ <strong>{{ total }}</strong> profissionais cadastrados</span>
+        <span>🔥 <strong>{{ pedidos|length }}</strong> clientes buscando serviço agora</span>
+        <span>🛡️ Contato direto sem intermediários</span>
     </div>
 </header>
 
 <div class="container">
 
+    {% if erro_vip %}
+        <div style="background:#fee2e2; color:#991b1b; padding:12px 16px; border-radius:8px; margin-bottom:18px; font-weight:600;">
+            ⚠️ Senha de acesso VIP incorreta. Assine o Destaque VIP em qualquer anúncio para receber a senha oficial!
+        </div>
+    {% endif %}
+
     <!-- Banner de Patrocinador Local -->
     {% if cfg.banner_ativo == '1' %}
     <a href="{{ cfg.banner_link }}" target="_blank" class="sponsor-banner">
         <div>
-            <span class="sponsor-badge">Destaque Comercial</span>
+            <span class="sponsor-badge">Patrocinador Oficial da Região</span>
             <h4>{{ cfg.banner_titulo }}</h4>
             <p>{{ cfg.banner_texto }}</p>
         </div>
-        <span class="sponsor-cta">Saiba Mais →</span>
+        <span class="sponsor-cta">Conhecer →</span>
     </a>
     {% endif %}
 
-    <!-- Barra de Busca e Categorias com Ícones -->
+    <!-- Mural de Clientes Procurando Serviço (Gatilho de Venda VIP) -->
+    {% if pedidos %}
+    <div class="leads-section">
+        <div class="leads-header">
+            <h3>📢 Clientes Procurando Profissionais Agora ({{ pedidos|length }})</h3>
+            <button onclick="abrirModal('modalPedido')" class="btn btn-sm" style="background:var(--blue-cta);">+ Publicar Meu Pedido</button>
+        </div>
+        <div class="leads-grid">
+            {% for p in pedidos %}
+            <div class="lead-card">
+                <div>
+                    <div class="lead-meta">📍 {{ p.cidade }} • {{ p.categoria }} • Cliente: {{ p.cliente_nome }}</div>
+                    <p class="lead-desc">"{{ p.descricao }}"</p>
+                </div>
+                {% if vip_desbloqueado and p.wpp_link %}
+                    <a href="{{ p.wpp_link }}?text=Olá%20{{ p.cliente_nome }},%20vi%20seu%20pedido%20no%20Guia%20de%20Serviços%20e%20posso%20te%20atender!" target="_blank" class="btn-wpp" style="margin-top:0; padding:8px; font-size:13px;">
+                        💬 Chamar Cliente no WhatsApp
+                    </a>
+                {% else %}
+                    <button onclick="abrirModal('modalAcessoVip')" class="btn-lead-locked">
+                        🔒 WhatsApp Liberado Apenas para Profissionais VIP
+                    </button>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Barra de Busca, Cidades e Categorias -->
     <div class="search-wrapper">
         <form action="/" method="GET" class="busca-bar">
             {% if cat_atual %}<input type="hidden" name="categoria" value="{{ cat_atual }}">{% endif %}
-            <input type="text" name="busca" value="{{ busca_atual }}" placeholder="O que você precisa? (Ex: Eletricista, Formosa do Oeste, Frete...)">
+            {% if cidade_atual %}<input type="hidden" name="cidade" value="{{ cidade_atual }}">{% endif %}
+            <input type="text" name="busca" value="{{ busca_atual }}" placeholder="O que você procura? (Ex: Eletricista, Pedreiro, Frete, Limpeza...)">
             <button type="submit" class="btn" style="background: var(--primary);">Buscar</button>
-            {% if busca_atual or cat_atual %}
-                <a href="/" class="btn" style="background: var(--muted);">Limpar</a>
+            {% if busca_atual or cat_atual or cidade_atual %}
+                <a href="/" class="btn" style="background: var(--muted);">Limpar Filtros</a>
             {% endif %}
         </form>
 
+        {% if cidades_disponiveis %}
+        <div class="filtros-label">Filtrar por Cidade:</div>
         <div class="filtros">
-            <a href="/" class="filtro-btn {{ 'ativo' if not cat_atual else '' }}">📋 Todos ({{ total }})</a>
-            {% for nome_cat, icone in categorias %}
-                <a href="/?categoria={{ nome_cat }}" class="filtro-btn {{ 'ativo' if cat_atual == nome_cat else '' }}">{{ icone }} {{ nome_cat }}</a>
+            <a href="/?categoria={{ cat_atual }}" class="filtro-btn cidade-pill {{ 'ativo' if not cidade_atual else '' }}">Todas as Cidades</a>
+            {% for cid in cidades_disponiveis %}
+                <a href="/?cidade={{ cid }}&categoria={{ cat_atual }}" class="filtro-btn cidade-pill {{ 'ativo' if cidade_atual == cid else '' }}">📍 {{ cid }}</a>
             {% endfor %}
         </div>
+        {% endif %}
+
+        <div class="filtros-label">Filtrar por Categoria:</div>
+        <div class="filtros">
+            <a href="/?cidade={{ cidade_atual }}" class="filtro-btn {{ 'ativo' if not cat_atual else '' }}">📋 Todos ({{ total }})</a>
+            {% for nome_cat, icone in categorias %}
+                <a href="/?categoria={{ nome_cat }}&cidade={{ cidade_atual }}" class="filtro-btn {{ 'ativo' if cat_atual == nome_cat else '' }}">{{ icone }} {{ nome_cat }}</a>
+            {% endfor %}
+        </div>
+    </div>
+
+    <!-- Faixa de Escassez de Vagas VIP -->
+    <div class="scarcity-bar">
+        <span>
+            ⚡ <strong>Destaque no Topo:</strong>
+            {% if cat_atual %}
+                {% if vagas_restantes > 0 %}
+                    Restam apenas <strong>{{ vagas_restantes }} de {{ limite_vagas }} vagas VIP</strong> na categoria <em>{{ cat_atual }}</em>!
+                {% else %}
+                    <strong>Vagas VIP esgotadas</strong> no momento para <em>{{ cat_atual }}</em>!
+                {% endif %}
+            {% else %}
+                Limite exclusivo de <strong>{{ limite_vagas }} profissionais VIP por categoria</strong> no topo da página!
+            {% endif %}
+        </span>
+        <button onclick="abrirModal('modalCadastro')" class="btn btn-vip btn-sm">Garantir Minha Vaga</button>
     </div>
 
     <!-- Lista de Serviços -->
@@ -638,7 +867,7 @@ HTML_INDEX = """
                         <strong>Contato:</strong> {{ item.contato }}
                         
                         {% if item.is_vip and item.wpp_link %}
-                            <a href="{{ item.wpp_link }}?text=Olá%20{{ item.nome }},%20vi%20seu%20anúncio%20na%20Vitrine%20de%20Serviços!" target="_blank" class="btn-wpp">
+                            <a href="{{ item.wpp_link }}?text=Olá%20{{ item.nome }},%20vi%20seu%20anúncio%20no%20Guia%20de%20Serviços!" target="_blank" class="btn-wpp">
                                 💬 Chamar no WhatsApp
                             </a>
                         {% endif %}
@@ -648,11 +877,15 @@ HTML_INDEX = """
                         <button onclick="abrirAvaliacao({{ item.id }}, '{{ item.titulo|replace("'", "") }}')" class="action-link">
                             ⭐ Avaliar
                         </button>
-                        <a href="https://api.whatsapp.com/send?text=Olha%20esse%20serviço%20que%20encontrei:%20*{{ item.titulo }}*%20({{ item.cidade }})%20-%20{{ item.preco }}.%20Veja%20mais%20em:%20{{ url_site }}" target="_blank" class="action-link">
+                        <a href="https://api.whatsapp.com/send?text=Olha%20esse%20profissional%20que%20encontrei:%20*{{ item.titulo }}*%20({{ item.cidade }})%20-%20{{ item.preco }}.%20Veja%20mais%20em:%20{{ url_site }}" target="_blank" class="action-link">
                             📤 Compartilhar
                         </a>
                         {% if not item.is_vip %}
-                            <a href="/pagar/{{ item.id }}" class="action-link action-vip">⚡ Destacar</a>
+                            {% if item.pode_destacar %}
+                                <a href="/pagar/{{ item.id }}" class="action-link action-vip">⚡ Destacar ({{ item.vagas_cat }} vagas)</a>
+                            {% else %}
+                                <span style="color:#94a3b8; font-size:11px;">Topo Lotado</span>
+                            {% endif %}
                         {% endif %}
                     </div>
                 </div>
@@ -667,12 +900,12 @@ HTML_INDEX = """
     </div>
 </div>
 
-<!-- MODAL 1: FORMULÁRIO DE CADASTRO -->
+<!-- MODAL 1: FORMULÁRIO DE CADASTRO DE SERVIÇO -->
 <div id="modalCadastro" class="modal-overlay">
     <div class="modal-box">
         <button onclick="fecharModal('modalCadastro')" class="modal-close">&times;</button>
         <h2 style="margin-top:0;">Divulgar Meu Trabalho</h2>
-        <p style="font-size:13px; color:var(--muted); margin-top:-10px; margin-bottom:18px;">Preencha os dados abaixo para aparecer na vitrine.</p>
+        <p style="font-size:13px; color:var(--muted); margin-top:-10px; margin-bottom:18px;">Preencha os dados abaixo para aparecer no guia regional.</p>
         
         <form action="/adicionar" method="POST">
             <div class="form-grid">
@@ -693,8 +926,8 @@ HTML_INDEX = """
                     </select>
                 </div>
                 <div class="form-group">
-                    <label>Cidade / Bairro:</label>
-                    <input type="text" name="cidade" required placeholder="Ex: Sua Cidade - PR">
+                    <label>Cidade:</label>
+                    <input type="text" name="cidade" required placeholder="Ex: Formosa do Oeste - PR">
                 </div>
                 <div class="form-group">
                     <label>Preço (ou valor inicial):</label>
@@ -720,8 +953,8 @@ HTML_INDEX = """
                 <label>
                     <input type="checkbox" name="quer_destaque" value="1">
                     <span>
-                        <strong>Quero Destaque VIP no Topo por {{ cfg.dias_destaque }} dias ({{ cfg.valor_destaque }})</strong><br>
-                        <small style="font-weight:normal;">Anúncios VIP recebem até <strong>5x mais contatos</strong>: ficam fixados no topo com borda dourada e botão direto para o seu WhatsApp!</small>
+                        <strong>Quero Destaque VIP no Topo (a partir de {{ cfg.valor_30d }})</strong><br>
+                        <small style="font-weight:normal;">Receba até <strong>5x mais contatos</strong>: anúncio fixado no topo com borda dourada, botão direto do WhatsApp e acesso liberado ao mural de clientes buscando serviço!</small>
                     </span>
                 </label>
             </div>
@@ -731,7 +964,68 @@ HTML_INDEX = """
     </div>
 </div>
 
-<!-- MODAL 2: AVALIAR PROFISSIONAL -->
+<!-- MODAL 2: PEDIR ORÇAMENTO URGENTE (CLIENTE) -->
+<div id="modalPedido" class="modal-overlay">
+    <div class="modal-box" style="max-width: 520px;">
+        <button onclick="fecharModal('modalPedido')" class="modal-close">&times;</button>
+        <h2 style="margin-top:0; color:#1e3a8a;">📢 Pedir Orçamento Grátis</h2>
+        <p style="font-size:13px; color:var(--muted); margin-top:-8px; margin-bottom:16px;">Descreva o que você precisa e os profissionais da sua cidade entram em contato com você pelo WhatsApp.</p>
+        
+        <form action="/pedir_orcamento" method="POST">
+            <div class="form-group">
+                <label>Seu Nome:</label>
+                <input type="text" name="cliente_nome" required placeholder="Ex: Carlos Eduardo">
+            </div>
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>Tipo de Serviço:</label>
+                    <select name="categoria">
+                        {% for nome_cat, icone in categorias %}
+                            <option value="{{ nome_cat }}">{{ icone }} {{ nome_cat }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Sua Cidade:</label>
+                    <input type="text" name="cidade" required placeholder="Ex: Assis Chateaubriand">
+                </div>
+            </div>
+            <div class="form-group">
+                <label>Seu WhatsApp para receber orçamentos:</label>
+                <input type="text" name="whatsapp" required placeholder="Ex: (99) 99999-9999">
+            </div>
+            <div class="form-group">
+                <label>O que você precisa? (Seja específico):</label>
+                <textarea name="descricao" rows="3" required placeholder="Ex: Preciso de um eletricista hoje à tarde para trocar um chuveiro e verificar uma tomada..."></textarea>
+            </div>
+            <button type="submit" class="btn" style="width:100%; background:var(--blue-cta); padding:13px;">Publicar Pedido de Orçamento</button>
+        </form>
+    </div>
+</div>
+
+<!-- MODAL 3: DESBLOQUEAR CONTATO DE CLIENTES (SENHA VIP) -->
+<div id="modalAcessoVip" class="modal-overlay">
+    <div class="modal-box" style="max-width: 440px; text-align:center;">
+        <button onclick="fecharModal('modalAcessoVip')" class="modal-close">&times;</button>
+        <h3 style="margin-top:0; color:var(--vip-dark);">🔒 Área Exclusiva Profissional VIP</h3>
+        <p style="font-size:14px; color:#475569;">O contato direto dos clientes que pedem orçamento no mural é liberado exclusivamente para profissionais com anúncio VIP ativo.</p>
+        
+        <form action="/desbloquear_vip" method="POST" style="margin-top:15px; text-align:left;">
+            <div class="form-group">
+                <label>Já é VIP? Digite sua Chave de Acesso:</label>
+                <input type="password" name="senha_vip" required placeholder="Digite a senha recebida no WhatsApp">
+            </div>
+            <button type="submit" class="btn btn-vip" style="width:100%;">Liberar Contatos dos Clientes</button>
+        </form>
+        
+        <div style="margin-top:18px; padding-top:14px; border-top:1px solid #e2e8f0; font-size:13px;">
+            Ainda não tem destaque VIP?<br>
+            <a href="#" onclick="fecharModal('modalAcessoVip'); abrirModal('modalCadastro'); return false;" style="color:var(--accent); font-weight:bold;">Cadastre seu anúncio e ative o VIP agora →</a>
+        </div>
+    </div>
+</div>
+
+<!-- MODAL 4: AVALIAR PROFISSIONAL -->
 <div id="modalAvaliacao" class="modal-overlay">
     <div class="modal-box" style="max-width: 440px;">
         <button onclick="fecharModal('modalAvaliacao')" class="modal-close">&times;</button>
@@ -763,12 +1057,8 @@ HTML_INDEX = """
 </div>
 
 <script>
-function abrirModal(id) {
-    document.getElementById(id).style.display = 'block';
-}
-function fecharModal(id) {
-    document.getElementById(id).style.display = 'none';
-}
+function abrirModal(id) { document.getElementById(id).style.display = 'block'; }
+function fecharModal(id) { document.getElementById(id).style.display = 'none'; }
 function abrirAvaliacao(id, titulo) {
     document.getElementById('inputServicoIdAval').value = id;
     document.getElementById('tituloServicoAval').innerText = titulo;
@@ -820,38 +1110,61 @@ HTML_PAGAR = """
 <body>
 <header>
     <h1>Destacar Anúncio no Topo</h1>
-    <p>Multiplique seus contatos ficando em primeiro lugar por {{ cfg.dias_destaque }} dias</p>
+    <p>Escolha seu plano e multiplique seus contatos na região</p>
 </header>
-<div class="container" style="max-width: 580px;">
+<div class="container" style="max-width: 600px;">
     <div class="card-box" style="text-align: center;">
         <h2 style="margin-top:0; color:var(--vip-dark);">Anúncio: {{ servico.titulo }}</h2>
-        <p>Seu anúncio gratuito já está publicado! Para ativar o <strong>Selo VIP, Borda Dourada, Topo da Página e Botão Direto do WhatsApp</strong>, pague o Pix abaixo com valor já fixado:</p>
         
-        <div style="background:#f8fafc; border:1px dashed #94a3b8; padding:20px; border-radius:8px; margin:20px 0;">
-            <p style="margin:0 0 5px 0; font-size:14px; color:var(--muted);">Valor Fixado ({{ cfg.dias_destaque }} dias):</p>
-            <div style="font-size:30px; font-weight:bold; color:var(--accent); margin-bottom:15px;">{{ cfg.valor_destaque }}</div>
+        {% if vagas_restantes <= 0 %}
+            <div style="background:#fee2e2; color:#991b1b; padding:18px; border-radius:8px; margin:20px 0;">
+                <strong>⚠️ Vagas VIP Esgotadas nesta Categoria!</strong><br>
+                Todas as {{ limite_vagas }} vagas de destaque para <em>{{ servico.categoria }}</em> estão ocupadas no momento. Tente novamente em breve!
+            </div>
+            <a href="/" class="btn">← Voltar para a Vitrine</a>
+        {% else %}
+            <p style="font-size:14px; color:#475569;">Restam apenas <strong>{{ vagas_restantes }} vagas VIP</strong> para <em>{{ servico.categoria }}</em>. Escolha a duração do seu destaque:</p>
+
+            <!-- Seletor de Plano 30d vs 90d -->
+            <div class="plan-selector">
+                <a href="/pagar/{{ servico.id }}?plano=30" class="plan-card {{ 'active' if plano == '30' else '' }}">
+                    <div style="font-weight:bold; font-size:15px;">Plano Mensal</div>
+                    <div style="font-size:24px; font-weight:800; color:var(--accent); margin:6px 0;">{{ cfg.valor_30d }}</div>
+                    <div style="font-size:12px; color:var(--muted);">30 dias no topo + Acesso Clientes</div>
+                </a>
+                <a href="/pagar/{{ servico.id }}?plano=90" class="plan-card {{ 'active' if plano == '90' else '' }}">
+                    <span class="plan-tag">MAIS ESCOLHIDO</span>
+                    <div style="font-weight:bold; font-size:15px;">Plano Trimestral</div>
+                    <div style="font-size:24px; font-weight:800; color:var(--accent); margin:6px 0;">{{ cfg.valor_90d }}</div>
+                    <div style="font-size:12px; color:var(--muted);">90 dias no topo + Acesso Clientes</div>
+                </a>
+            </div>
             
-            <p style="margin:0 0 5px 0; font-size:14px; color:var(--muted);">Pix Copia e Cola (Valor já preenchido automaticamente):</p>
-            <input type="text" value="{{ pix_copia_cola }}" id="pixCopiaCola" readonly style="text-align:center; font-size:12px; background:white; color:#334155;">
-            <button onclick="copiarCodigo('pixCopiaCola', 'Código Pix Copia e Cola copiado! Abra o app do seu banco e escolha Pix Copia e Cola.')" class="btn" style="margin-top:10px; background:var(--secondary); width:100%;">
-                📋 Copiar Pix Copia e Cola ({{ cfg.valor_destaque }})
-            </button>
+            <div style="background:#f8fafc; border:1px dashed #94a3b8; padding:20px; border-radius:8px; margin:20px 0;">
+                <p style="margin:0 0 5px 0; font-size:13px; color:var(--muted);">Pix Copia e Cola ({{ dias_escolhidos }} dias — Valor Travado):</p>
+                <div style="font-size:28px; font-weight:bold; color:var(--accent); margin-bottom:12px;">{{ valor_escolhido }}</div>
+                
+                <input type="text" value="{{ pix_copia_cola }}" id="pixCopiaCola" readonly style="text-align:center; font-size:12px; background:white; color:#334155;">
+                <button onclick="copiarCodigo('pixCopiaCola', 'Código Pix Copia e Cola copiado! Abra o app do seu banco e escolha Pix Copia e Cola.')" class="btn" style="margin-top:10px; background:var(--secondary); width:100%;">
+                    📋 Copiar Pix Copia e Cola ({{ valor_escolhido }})
+                </button>
 
-            <p style="margin:15px 0 5px 0; font-size:12px; color:var(--muted);">Ou se preferir usar a Chave Pix avulsa:</p>
-            <input type="text" value="{{ cfg.chave_pix }}" id="chavePix" readonly style="text-align:center; font-weight:bold; font-size:13px; background:white;">
-            <button onclick="copiarCodigo('chavePix', 'Chave Pix copiada!')" class="btn" style="margin-top:6px; background:#64748b; width:100%; padding:8px; font-size:12px;">
-                Copiar Apenas a Chave
-            </button>
-        </div>
+                <p style="margin:14px 0 5px 0; font-size:12px; color:var(--muted);">Ou Chave Pix avulsa:</p>
+                <input type="text" value="{{ cfg.chave_pix }}" id="chavePix" readonly style="text-align:center; font-weight:bold; font-size:13px; background:white;">
+                <button onclick="copiarCodigo('chavePix', 'Chave Pix copiada!')" class="btn" style="margin-top:6px; background:#64748b; width:100%; padding:8px; font-size:12px;">
+                    Copiar Apenas a Chave
+                </button>
+            </div>
 
-        <p style="font-size:14px; color:#475569;">Após realizar o Pix, clique no botão abaixo para enviar o comprovante e liberar seu destaque imediatamente:</p>
-        
-        <a href="https://wa.me/{{ cfg.seu_whatsapp }}?text=Olá!%20Acabei%20de%20fazer%20o%20Pix%20de%20{{ cfg.valor_destaque }}%20para%20destacar%20o%20anúncio%20ID%20%23{{ servico.id }}%20({{ servico.titulo }}).%20Segue%20o%20comprovante:" target="_blank" class="btn btn-vip" style="width:100%; padding:14px; font-size:16px;">
-            Enviar Comprovante no WhatsApp
-        </a>
-        
-        <br><br>
-        <a href="/" style="color:var(--muted); text-decoration:none; font-size:14px;">← Voltar para a Vitrine</a>
+            <p style="font-size:14px; color:#475569;">Após o pagamento, envie o comprovante para liberar seu destaque e receber sua <strong>Senha de Acesso aos Clientes</strong>:</p>
+            
+            <a href="https://wa.me/{{ cfg.seu_whatsapp }}?text=Olá!%20Acabei%20de%20fazer%20o%20Pix%20de%20{{ valor_escolhido }}%20(Plano%20{{ dias_escolhidos }}%20dias)%20para%20destacar%20o%20anúncio%20ID%20%23{{ servico.id }}%20({{ servico.titulo }}).%20Segue%20o%20comprovante:" target="_blank" class="btn btn-vip" style="width:100%; padding:14px; font-size:16px;">
+                Enviar Comprovante no WhatsApp
+            </a>
+            
+            <br><br>
+            <a href="/" style="color:var(--muted); text-decoration:none; font-size:14px;">← Voltar para a Vitrine</a>
+        {% endif %}
     </div>
 </div>
 <script>
@@ -883,7 +1196,7 @@ HTML_ADMIN = """
 </head>
 <body>
 <div class="top-bar">
-    <span>Administração da Vitrine</span>
+    <span>Administração do Guia Regional</span>
     <div>
         <a href="/">Ver Site</a>
         {% if logado %}<a href="/admin/logout">Sair</a>{% endif %}
@@ -891,7 +1204,7 @@ HTML_ADMIN = """
 </div>
 <header>
     <h1>Painel de Controle</h1>
-    <p>Gerencie anúncios VIP, patrocinadores e configurações de Pix</p>
+    <p>Gerencie anúncios VIP, pedidos de orçamento, patrocinadores e Pix</p>
 </header>
 <div class="container">
     {% if not logado %}
@@ -907,14 +1220,14 @@ HTML_ADMIN = """
             </form>
         </div>
     {% else %}
-        <!-- Configurações de Pix e Patrocinador -->
+        <!-- Configurações de Lucro -->
         <div class="card-box">
-            <h2 style="margin-top:0;">Configurações de Lucro (Pix e Banner Patrocinador)</h2>
+            <h2 style="margin-top:0;">Configurações de Lucro, Planos e Patrocinador</h2>
             {% if salvo %}<p style="color:var(--accent); font-weight:bold;">✓ Configurações salvas com sucesso!</p>{% endif %}
             <form action="/admin/config" method="POST">
                 <div class="form-grid">
                     <div class="form-group">
-                        <label>Sua Chave Pix:</label>
+                        <label>Sua Chave Pix Completa:</label>
                         <input type="text" name="chave_pix" value="{{ cfg.chave_pix }}" required>
                     </div>
                     <div class="form-group">
@@ -922,12 +1235,16 @@ HTML_ADMIN = """
                         <input type="text" name="seu_whatsapp" value="{{ cfg.seu_whatsapp }}" required>
                     </div>
                     <div class="form-group">
-                        <label>Valor do Destaque VIP:</label>
-                        <input type="text" name="valor_destaque" value="{{ cfg.valor_destaque }}" required>
+                        <label>Valor Plano Mensal (30 dias):</label>
+                        <input type="text" name="valor_30d" value="{{ cfg.valor_30d }}" required>
                     </div>
                     <div class="form-group">
-                        <label>Duração do VIP (dias):</label>
-                        <input type="number" name="dias_destaque" value="{{ cfg.dias_destaque }}" required>
+                        <label>Valor Plano Trimestral (90 dias):</label>
+                        <input type="text" name="valor_90d" value="{{ cfg.valor_90d }}" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Senha VIP (para liberar mural de clientes aos pagantes):</label>
+                        <input type="text" name="senha_vip_clientes" value="{{ cfg.senha_vip_clientes }}" required>
                     </div>
                     <div class="form-group">
                         <label>Exibir Banner de Patrocinador no Topo?</label>
@@ -940,7 +1257,7 @@ HTML_ADMIN = """
                         <label>Título do Banner Patrocinador:</label>
                         <input type="text" name="banner_titulo" value="{{ cfg.banner_titulo }}">
                     </div>
-                    <div class="form-group full-width">
+                    <div class="form-group">
                         <label>Texto do Banner Patrocinador:</label>
                         <input type="text" name="banner_texto" value="{{ cfg.banner_texto }}">
                     </div>
@@ -955,7 +1272,7 @@ HTML_ADMIN = """
 
         <!-- Tabela de Anúncios -->
         <div class="card-box" style="overflow-x:auto;">
-            <h2 style="margin-top:0;">Anúncios Cadastrados ({{ servicos|length }})</h2>
+            <h2 style="margin-top:0;">Profissionais Cadastrados ({{ servicos|length }})</h2>
             <table>
                 <thead>
                     <tr>
@@ -972,7 +1289,7 @@ HTML_ADMIN = """
                         <td><strong>#{{ s.id }}</strong></td>
                         <td>
                             <strong>{{ s.titulo }}</strong><br>
-                            <small>{{ s.nome }} • {{ s.preco }}</small>
+                            <small>{{ s.nome }} • {{ s.categoria }} • {{ s.preco }}</small>
                         </td>
                         <td>
                             {{ s.cidade }}<br>
@@ -986,11 +1303,41 @@ HTML_ADMIN = """
                             {% endif %}
                         </td>
                         <td style="display:flex; gap:6px; flex-wrap:wrap;">
-                            <a href="/admin/vip/{{ s.id }}" class="btn btn-vip btn-sm">+{{ cfg.dias_destaque }}d VIP</a>
+                            <a href="/admin/vip/{{ s.id }}/30" class="btn btn-vip btn-sm">+30d VIP</a>
+                            <a href="/admin/vip/{{ s.id }}/90" class="btn btn-vip btn-sm" style="background:#b45309;">+90d VIP</a>
                             {% if s.is_vip %}
                                 <a href="/admin/remover_vip/{{ s.id }}" class="btn btn-sm" style="background:var(--muted);">Tirar VIP</a>
                             {% endif %}
                             <a href="/admin/excluir/{{ s.id }}" onclick="return confirm('Excluir este anúncio?')" class="btn btn-danger">Excluir</a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Tabela de Pedidos de Orçamento -->
+        <div class="card-box" style="overflow-x:auto;">
+            <h2 style="margin-top:0;">Pedidos de Orçamento de Clientes ({{ pedidos|length }})</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Cliente</th>
+                        <th>Cidade / Categoria</th>
+                        <th>Pedido</th>
+                        <th>WhatsApp</th>
+                        <th>Ação</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in pedidos %}
+                    <tr>
+                        <td><strong>{{ p.cliente_nome }}</strong></td>
+                        <td>{{ p.cidade }}<br><small>{{ p.categoria }}</small></td>
+                        <td>{{ p.descricao }}</td>
+                        <td>{{ p.whatsapp }}</td>
+                        <td>
+                            <a href="/admin/excluir_pedido/{{ p.id }}" onclick="return confirm('Remover este pedido?')" class="btn btn-danger">Remover</a>
                         </td>
                     </tr>
                     {% endfor %}
@@ -1010,16 +1357,33 @@ HTML_ADMIN = """
 @app.route("/")
 def index():
     categoria = request.args.get("categoria", "")
+    cidade = request.args.get("cidade", "")
     busca = request.args.get("busca", "").strip()
+    erro_vip = request.args.get("erro_vip") == "1"
     cfg = get_config()
     db = DBWrapper()
     
+    # Conta quantos VIPs ativos existem por categoria para aplicar escassez
+    todos_rows = db.execute("SELECT * FROM servicos").fetchall()
+    agora = datetime.now()
+    vips_por_cat = {}
+    cidades_set = set()
+    
+    for r in todos_rows:
+        cidades_set.add(r["cidade"].strip())
+        if r["destaque_ate"] and datetime.fromisoformat(r["destaque_ate"]) > agora:
+            cat = r["categoria"]
+            vips_por_cat[cat] = vips_por_cat.get(cat, 0) + 1
+
+    # Query filtrada
     query = "SELECT * FROM servicos WHERE 1=1"
     params = []
-    
     if categoria:
         query += " AND categoria = ?"
         params.append(categoria)
+    if cidade:
+        query += " AND cidade = ?"
+        params.append(cidade)
     if busca:
         query += " AND (titulo LIKE ? OR descricao LIKE ? OR cidade LIKE ? OR nome LIKE ?)"
         termo = f"%{busca}%"
@@ -1027,20 +1391,19 @@ def index():
         
     query += " ORDER BY id DESC"
     rows = db.execute(query, params).fetchall()
-    total = db.execute("SELECT COUNT(*) as c FROM servicos").fetchone()["c"]
+    total = len(todos_rows)
 
-    agora = datetime.now()
     lista_servicos = []
-    
     for r in rows:
         item = dict(r)
-        is_vip = False
-        if item["destaque_ate"]:
-            validade = datetime.fromisoformat(item["destaque_ate"])
-            if validade > agora:
-                is_vip = True
+        is_vip = bool(item["destaque_ate"] and datetime.fromisoformat(item["destaque_ate"]) > agora)
         item["is_vip"] = is_vip
         item["wpp_link"] = formatar_whatsapp(item["contato"])
+        
+        ocupadas = vips_por_cat.get(item["categoria"], 0)
+        restantes = max(0, LIMITE_VAGAS_VIP - ocupadas)
+        item["vagas_cat"] = restantes
+        item["pode_destacar"] = restantes > 0
         
         avals = db.execute("SELECT * FROM avaliacoes WHERE servico_id = ? ORDER BY id DESC", (item["id"],)).fetchall()
         item["total_aval"] = len(avals)
@@ -1055,8 +1418,17 @@ def index():
 
         lista_servicos.append(item)
 
-    db.close()
     lista_servicos.sort(key=lambda x: x["is_vip"], reverse=True)
+
+    # Pedidos de Orçamento recentes (últimos 6)
+    pedidos_rows = db.execute("SELECT * FROM pedidos ORDER BY id DESC LIMIT 6").fetchall()
+    pedidos = []
+    for p in pedidos_rows:
+        pd = dict(p)
+        pd["wpp_link"] = formatar_whatsapp(pd["whatsapp"])
+        pedidos.append(pd)
+
+    db.close()
 
     categorias = [
         ("Reformas e Reparos", "🛠️"),
@@ -1068,14 +1440,23 @@ def index():
         ("Outros Serviços", "⚡")
     ]
 
+    vagas_restantes = max(0, LIMITE_VAGAS_VIP - vips_por_cat.get(categoria, 0)) if categoria else LIMITE_VAGAS_VIP
+
     return render_template_string(
         HTML_INDEX,
         servicos=lista_servicos,
+        pedidos=pedidos,
         categorias=categorias,
+        cidades_disponiveis=sorted(list(cidades_set)),
         cat_atual=categoria,
+        cidade_atual=cidade,
         busca_atual=busca,
         total=total,
         cfg=cfg,
+        limite_vagas=LIMITE_VAGAS_VIP,
+        vagas_restantes=vagas_restantes,
+        vip_desbloqueado=session.get("vip_desbloqueado", False),
+        erro_vip=erro_vip,
         url_site=request.host_url
     )
 
@@ -1084,7 +1465,7 @@ def adicionar():
     nome = request.form.get("nome")
     titulo = request.form.get("titulo")
     categoria = request.form.get("categoria")
-    cidade = request.form.get("cidade")
+    cidade = request.form.get("cidade").strip()
     preco = request.form.get("preco")
     descricao = request.form.get("descricao")
     contato = request.form.get("contato")
@@ -1101,6 +1482,37 @@ def adicionar():
 
     if quer_destaque == "1":
         return redirect(url_for("pagar", servico_id=novo_id))
+    return redirect(url_for("index"))
+
+@app.route("/pedir_orcamento", methods=["POST"])
+def pedir_orcamento():
+    cliente_nome = request.form.get("cliente_nome", "").strip()
+    categoria = request.form.get("categoria")
+    cidade = request.form.get("cidade", "").strip()
+    whatsapp = request.form.get("whatsapp", "").strip()
+    descricao = request.form.get("descricao", "").strip()
+
+    if cliente_nome and descricao:
+        db = DBWrapper()
+        db.execute("""
+            INSERT INTO pedidos (cliente_nome, categoria, cidade, descricao, whatsapp, criado_em)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (cliente_nome, categoria, cidade, descricao, whatsapp, datetime.now().isoformat()))
+        db.commit()
+        db.close()
+    return redirect(url_for("index"))
+
+@app.route("/desbloquear_vip", methods=["POST"])
+def desbloquear_vip():
+    cfg = get_config()
+    if request.form.get("senha_vip") == cfg.get("senha_vip_clientes"):
+        session["vip_desbloqueado"] = True
+        return redirect(url_for("index"))
+    return redirect(url_for("index", erro_vip=1))
+
+@app.route("/sair_vip")
+def sair_vip():
+    session.pop("vip_desbloqueado", None)
     return redirect(url_for("index"))
 
 @app.route("/avaliar", methods=["POST"])
@@ -1122,19 +1534,45 @@ def avaliar():
 
 @app.route("/pagar/<int:servico_id>")
 def pagar(servico_id):
+    plano = request.args.get("plano", "30")
+    if plano not in ("30", "90"):
+        plano = "30"
+        
     cfg = get_config()
     db = DBWrapper()
     servico = db.execute("SELECT * FROM servicos WHERE id = ?", (servico_id,)).fetchone()
-    db.close()
+    
     if not servico:
+        db.close()
         return redirect(url_for("index"))
+        
+    # Verifica vagas VIP disponíveis na categoria
+    rows_cat = db.execute("SELECT destaque_ate FROM servicos WHERE categoria = ?", (servico["categoria"],)).fetchall()
+    db.close()
+    
+    agora = datetime.now()
+    ocupadas = sum(1 for r in rows_cat if r["destaque_ate"] and datetime.fromisoformat(r["destaque_ate"]) > agora)
+    vagas_restantes = max(0, LIMITE_VAGAS_VIP - ocupadas)
+    
+    valor_escolhido = cfg["valor_90d"] if plano == "90" else cfg["valor_30d"]
+    dias_escolhidos = "90" if plano == "90" else "30"
     
     pix_copia_cola = gerar_pix_copia_cola(
         cfg["chave_pix"],
-        cfg["valor_destaque"],
-        txid=f"ANUNCIO{servico_id}"
+        valor_escolhido,
+        txid=f"VIP{dias_escolhidos}ID{servico_id}"
     )
-    return render_template_string(HTML_PAGAR, servico=servico, cfg=cfg, pix_copia_cola=pix_copia_cola)
+    return render_template_string(
+        HTML_PAGAR,
+        servico=servico,
+        cfg=cfg,
+        plano=plano,
+        valor_escolhido=valor_escolhido,
+        dias_escolhidos=dias_escolhidos,
+        pix_copia_cola=pix_copia_cola,
+        vagas_restantes=vagas_restantes,
+        limite_vagas=LIMITE_VAGAS_VIP
+    )
 
 @app.route("/admin", methods=["GET", "POST"])
 def admin():
@@ -1152,6 +1590,7 @@ def admin():
     salvo = request.args.get("salvo") == "1"
     db = DBWrapper()
     rows = db.execute("SELECT * FROM servicos ORDER BY id DESC").fetchall()
+    pedidos = db.execute("SELECT * FROM pedidos ORDER BY id DESC").fetchall()
     db.close()
 
     agora = datetime.now()
@@ -1161,15 +1600,15 @@ def admin():
         item["is_vip"] = bool(item["destaque_ate"] and datetime.fromisoformat(item["destaque_ate"]) > agora)
         servicos.append(item)
 
-    return render_template_string(HTML_ADMIN, logado=True, servicos=servicos, cfg=cfg, salvo=salvo)
+    return render_template_string(HTML_ADMIN, logado=True, servicos=servicos, pedidos=pedidos, cfg=cfg, salvo=salvo)
 
 @app.route("/admin/config", methods=["POST"])
 def salvar_config():
     if not session.get("admin_logado"):
         return redirect(url_for("admin"))
     campos = [
-        "chave_pix", "seu_whatsapp", "valor_destaque", "dias_destaque",
-        "banner_ativo", "banner_titulo", "banner_texto", "banner_link"
+        "chave_pix", "seu_whatsapp", "valor_30d", "valor_90d",
+        "senha_vip_clientes", "banner_ativo", "banner_titulo", "banner_texto", "banner_link"
     ]
     db = DBWrapper()
     for c in campos:
@@ -1180,12 +1619,10 @@ def salvar_config():
     db.close()
     return redirect(url_for("admin", salvo=1))
 
-@app.route("/admin/vip/<int:servico_id>")
-def ativar_vip(servico_id):
+@app.route("/admin/vip/<int:servico_id>/<int:dias>")
+def ativar_vip(servico_id, dias):
     if not session.get("admin_logado"):
         return redirect(url_for("admin"))
-    cfg = get_config()
-    dias = int(cfg.get("dias_destaque", 30))
     validade = (datetime.now() + timedelta(days=dias)).isoformat()
     db = DBWrapper()
     db.execute("UPDATE servicos SET destaque_ate = ? WHERE id = ?", (validade, servico_id))
@@ -1210,6 +1647,16 @@ def excluir_servico(servico_id):
     db = DBWrapper()
     db.execute("DELETE FROM avaliacoes WHERE servico_id = ?", (servico_id,))
     db.execute("DELETE FROM servicos WHERE id = ?", (servico_id,))
+    db.commit()
+    db.close()
+    return redirect(url_for("admin"))
+
+@app.route("/admin/excluir_pedido/<int:pedido_id>")
+def excluir_pedido(pedido_id):
+    if not session.get("admin_logado"):
+        return redirect(url_for("admin"))
+    db = DBWrapper()
+    db.execute("DELETE FROM pedidos WHERE id = ?", (pedido_id,))
     db.commit()
     db.close()
     return redirect(url_for("admin"))
