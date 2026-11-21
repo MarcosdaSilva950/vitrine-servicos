@@ -10,7 +10,7 @@ app = Flask(__name__)
 # =====================================================================
 app.secret_key = "chave_secreta_vitrine_marcao_2026_pro"
 SENHA_ADMIN = "22041988"
-PIX_PADRAO = "997ef3d7-4a1c-436f-b4fa-2c668ad7"
+PIX_PADRAO = "997ef3d7-4a1c-436f-b4fa-2c668ad2478c"
 WPP_PADRAO = "5544998258119"
 VALOR_PADRAO = "R$ 19,90"
 DIAS_PADRAO = "30"
