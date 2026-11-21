@@ -1,4 +1,5 @@
 import os
+import re
 import sqlite3
 from datetime import datetime, timedelta
 from flask import Flask, render_template_string, request, redirect, url_for, session
@@ -10,7 +11,7 @@ app = Flask(__name__)
 # =====================================================================
 app.secret_key = "chave_secreta_vitrine_marcao_2026_pro"
 SENHA_ADMIN = "22041988"
-PIX_PADRAO = "997ef3d7-4a1c-436f-b4fa-2c668ad2478c"
+PIX_PADRAO = "997ef3d7-4a1c-436f-b4fa-2c668ad7"
 WPP_PADRAO = "5544998258119"
 VALOR_PADRAO = "R$ 19,90"
 DIAS_PADRAO = "30"
@@ -119,6 +120,48 @@ def formatar_whatsapp(contato):
     elif len(numeros) in (12, 13) and numeros.startswith("55"):
         return f"https://wa.me/{numeros}"
     return None
+
+# =====================================================================
+# GERADOR DE CÓDIGO PIX COPIA E COLA (BR CODE) COM VALOR FIXADO
+# =====================================================================
+def gerar_pix_copia_cola(chave_pix, valor_texto, txid="VITRINEVIP"):
+    """Gera o payload oficial EMV/BR Code do Banco Central com valor travado."""
+    def emv(tag, val):
+        return f"{tag}{len(val):02d}{val}"
+
+    # Extrai o valor numérico de textos como "R$ 19,90" -> "19.90"
+    limpo = re.sub(r"[^\d,\.]", "", valor_texto).replace(",", ".")
+    try:
+        valor_float = float(limpo)
+        valor_str = f"{valor_float:.2f}"
+    except ValueError:
+        valor_str = "19.90"
+
+    merchant_account = emv("00", "br.gov.bcb.pix") + emv("01", chave_pix.strip())
+    payload = (
+        emv("00", "01") +
+        emv("26", merchant_account) +
+        emv("52", "0000") +
+        emv("53", "986") +
+        emv("54", valor_str) +
+        emv("58", "BR") +
+        emv("59", "VITRINE SERVICOS") +
+        emv("60", "BRASIL") +
+        emv("62", emv("05", re.sub(r"[^a-zA-Z0-9]", "", txid)[:20] or "VIP")) +
+        "6304"
+    )
+
+    # Cálculo CRC16-CCITT (0xFFFF) exigido pelo padrão Pix
+    crc = 0xFFFF
+    for char in payload:
+        crc ^= ord(char) << 8
+        for _ in range(8):
+            if crc & 0x8000:
+                crc = ((crc << 1) ^ 0x1021) & 0xFFFF
+            else:
+                crc = (crc << 1) & 0xFFFF
+
+    return f"{payload}{crc:04X}"
 
 # =====================================================================
 # CSS E TEMPLATES PROFISSIONAIS
@@ -311,7 +354,6 @@ HTML_BASE_CSS = """
         background: linear-gradient(to bottom, #fffdf5, #ffffff);
         box-shadow: 0 6px 20px rgba(245, 158, 11, 0.2);
     }
-    /* EXIBIÇÃO DA IMAGEM 100% INTEIRA SEM CORTES */
     .card-img-wrapper {
         width: 100%;
         background-color: #f8fafc;
@@ -636,7 +678,7 @@ HTML_INDEX = """
             <div class="form-grid">
                 <div class="form-group">
                     <label>Seu Nome ou Empresa:</label>
-                    <input type="text" name="nome" required placeholder="Ex: Marcão do Povo">
+                    <input type="text" name="nome" required placeholder="Ex: João da Silva">
                 </div>
                 <div class="form-group">
                     <label>Título do Serviço:</label>
@@ -652,7 +694,7 @@ HTML_INDEX = """
                 </div>
                 <div class="form-group">
                     <label>Cidade / Bairro:</label>
-                    <input type="text" name="cidade" required placeholder="Ex: Formosa do Oeste - PR">
+                    <input type="text" name="cidade" required placeholder="Ex: Sua Cidade - PR">
                 </div>
                 <div class="form-group">
                     <label>Preço (ou valor inicial):</label>
@@ -660,7 +702,7 @@ HTML_INDEX = """
                 </div>
                 <div class="form-group">
                     <label>WhatsApp (com DDD):</label>
-                    <input type="text" name="contato" required placeholder="Ex: (44) 99825-8119">
+                    <input type="text" name="contato" required placeholder="Ex: (99) 99999-9999">
                 </div>
                 <div class="form-group full-width">
                     <label>Foto do Trabalho ou Cartão (Opcional):</label>
@@ -699,7 +741,7 @@ HTML_INDEX = """
             <input type="hidden" name="servico_id" id="inputServicoIdAval">
             <div class="form-group">
                 <label>Seu Nome:</label>
-                <input type="text" name="autor" required placeholder="Ex: João da Silva">
+                <input type="text" name="autor" required placeholder="Ex: Maria Souza">
             </div>
             <div class="form-group">
                 <label>Nota:</label>
@@ -783,15 +825,23 @@ HTML_PAGAR = """
 <div class="container" style="max-width: 580px;">
     <div class="card-box" style="text-align: center;">
         <h2 style="margin-top:0; color:var(--vip-dark);">Anúncio: {{ servico.titulo }}</h2>
-        <p>Seu anúncio gratuito já está publicado! Para ativar o <strong>Selo VIP, Borda Dourada, Topo da Página e Botão Direto do WhatsApp</strong>, faça o Pix abaixo:</p>
+        <p>Seu anúncio gratuito já está publicado! Para ativar o <strong>Selo VIP, Borda Dourada, Topo da Página e Botão Direto do WhatsApp</strong>, pague o Pix abaixo com valor já fixado:</p>
         
         <div style="background:#f8fafc; border:1px dashed #94a3b8; padding:20px; border-radius:8px; margin:20px 0;">
-            <p style="margin:0 0 5px 0; font-size:14px; color:var(--muted);">Valor do Plano ({{ cfg.dias_destaque }} dias):</p>
+            <p style="margin:0 0 5px 0; font-size:14px; color:var(--muted);">Valor Fixado ({{ cfg.dias_destaque }} dias):</p>
             <div style="font-size:30px; font-weight:bold; color:var(--accent); margin-bottom:15px;">{{ cfg.valor_destaque }}</div>
             
-            <p style="margin:0 0 5px 0; font-size:14px; color:var(--muted);">Chave Pix (Copie abaixo):</p>
-            <input type="text" value="{{ cfg.chave_pix }}" id="chavePix" readonly style="text-align:center; font-weight:bold; font-size:15px; background:white;">
-            <button onclick="copiarPix()" class="btn" style="margin-top:10px; background:var(--secondary); width:100%;">Copiar Chave Pix</button>
+            <p style="margin:0 0 5px 0; font-size:14px; color:var(--muted);">Pix Copia e Cola (Valor já preenchido automaticamente):</p>
+            <input type="text" value="{{ pix_copia_cola }}" id="pixCopiaCola" readonly style="text-align:center; font-size:12px; background:white; color:#334155;">
+            <button onclick="copiarCodigo('pixCopiaCola', 'Código Pix Copia e Cola copiado! Abra o app do seu banco e escolha Pix Copia e Cola.')" class="btn" style="margin-top:10px; background:var(--secondary); width:100%;">
+                📋 Copiar Pix Copia e Cola ({{ cfg.valor_destaque }})
+            </button>
+
+            <p style="margin:15px 0 5px 0; font-size:12px; color:var(--muted);">Ou se preferir usar a Chave Pix avulsa:</p>
+            <input type="text" value="{{ cfg.chave_pix }}" id="chavePix" readonly style="text-align:center; font-weight:bold; font-size:13px; background:white;">
+            <button onclick="copiarCodigo('chavePix', 'Chave Pix copiada!')" class="btn" style="margin-top:6px; background:#64748b; width:100%; padding:8px; font-size:12px;">
+                Copiar Apenas a Chave
+            </button>
         </div>
 
         <p style="font-size:14px; color:#475569;">Após realizar o Pix, clique no botão abaixo para enviar o comprovante e liberar seu destaque imediatamente:</p>
@@ -805,12 +855,12 @@ HTML_PAGAR = """
     </div>
 </div>
 <script>
-function copiarPix() {
-    var copyText = document.getElementById("chavePix");
+function copiarCodigo(elementId, mensagem) {
+    var copyText = document.getElementById(elementId);
     copyText.select();
     copyText.setSelectionRange(0, 99999);
     navigator.clipboard.writeText(copyText.value);
-    alert("Chave Pix copiada: " + copyText.value);
+    alert(mensagem);
 }
 </script>
 </body>
@@ -1078,7 +1128,13 @@ def pagar(servico_id):
     db.close()
     if not servico:
         return redirect(url_for("index"))
-    return render_template_string(HTML_PAGAR, servico=servico, cfg=cfg)
+    
+    pix_copia_cola = gerar_pix_copia_cola(
+        cfg["chave_pix"],
+        cfg["valor_destaque"],
+        txid=f"ANUNCIO{servico_id}"
+    )
+    return render_template_string(HTML_PAGAR, servico=servico, cfg=cfg, pix_copia_cola=pix_copia_cola)
 
 @app.route("/admin", methods=["GET", "POST"])
 def admin():
