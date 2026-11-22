@@ -2,17 +2,17 @@ import os
 import re
 import sqlite3
 from datetime import datetime, timedelta
-from flask import Flask, render_template_string, request, redirect, url_for, session
+from urllib.parse import quote
+from flask import Flask, render_template_string, request, redirect, url_for, session, jsonify
 
 app = Flask(__name__)
 
 # =====================================================================
 # CONFIGURAÇÕES INICIAIS (SUAS CREDENCIAIS)
 # =====================================================================
-app.secret_key = "chave_secreta_vitrine_marcao_2026_pro_max"
+app.secret_key = "chave_secreta_vitrine_marcao_2026_pro_v2"
 SENHA_ADMIN = "22041988"
 
-# IMPORTANTE: Coloque aqui sua chave aleatória completa (36 caracteres) ou CPF/E-mail
 PIX_PADRAO = "997ef3d7-4a1c-436f-b4fa-2c668ad2478c"
 WPP_PADRAO = "5544998258119"
 
@@ -20,6 +20,7 @@ VALOR_30D_PADRAO = "R$ 19,90"
 VALOR_90D_PADRAO = "R$ 44,90"
 LIMITE_VAGAS_VIP = 4
 SENHA_CLIENTES_VIP_PADRAO = "VIP2026"
+ITENS_POR_PAGINA = 12
 # =====================================================================
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
@@ -78,7 +79,10 @@ def init_db():
             contato TEXT NOT NULL,
             imagem TEXT,
             destaque_ate TEXT,
-            criado_em TEXT NOT NULL
+            criado_em TEXT NOT NULL,
+            visualizacoes INTEGER DEFAULT 0,
+            cliques_wpp INTEGER DEFAULT 0,
+            pin_edicao TEXT DEFAULT '0000'
         )
     """)
     db.execute("""
@@ -108,6 +112,21 @@ def init_db():
             valor TEXT NOT NULL
         )
     """)
+    db.commit()
+
+    # Migração automática segura para bancos já existentes (Neon / SQLite)
+    colunas_novas = [
+        ("visualizacoes", "INTEGER DEFAULT 0"),
+        ("cliques_wpp", "INTEGER DEFAULT 0"),
+        ("pin_edicao", "TEXT DEFAULT '0000'")
+    ]
+    for col, tipo in colunas_novas:
+        try:
+            db.execute(f"ALTER TABLE servicos ADD COLUMN {col} {tipo}")
+            db.commit()
+        except Exception:
+            db.conn.rollback()
+
     padroes = {
         "chave_pix": PIX_PADRAO,
         "seu_whatsapp": WPP_PADRAO,
@@ -139,7 +158,6 @@ def formatar_whatsapp(contato):
     return None
 
 def gerar_pix_copia_cola(chave_pix, valor_texto, txid="VITRINEVIP"):
-    """Gera o payload oficial EMV/BR Code do Banco Central com valor travado."""
     def emv(tag, val):
         return f"{tag}{len(val):02d}{val}"
 
@@ -266,7 +284,6 @@ HTML_BASE_CSS = """
     }
     .btn-hero-blue:hover { background: var(--blue-cta-hover); }
 
-    /* Barra de Prova Social Viva */
     .social-proof-bar {
         display: flex;
         justify-content: center;
@@ -283,7 +300,6 @@ HTML_BASE_CSS = """
 
     .container { max-width: 1140px; margin: 24px auto; padding: 0 20px; }
 
-    /* Banner Patrocinador */
     .sponsor-banner {
         background: linear-gradient(90deg, #1e293b 0%, #334155 100%);
         border-left: 5px solid var(--vip);
@@ -322,7 +338,6 @@ HTML_BASE_CSS = """
         white-space: nowrap;
     }
 
-    /* Mural de Clientes Procurando Serviço (Oportunidades) */
     .leads-section {
         background: #eff6ff;
         border: 1px solid #bfdbfe;
@@ -370,7 +385,6 @@ HTML_BASE_CSS = """
     }
     .btn-lead-locked:hover { background: #e2e8f0; color: var(--primary); }
 
-    /* Busca, Cidades e Categorias */
     .search-wrapper {
         background: white;
         padding: 16px;
@@ -430,7 +444,6 @@ HTML_BASE_CSS = """
         color: white;
     }
 
-    /* Faixa de Escassez VIP */
     .scarcity-bar {
         background: #fffbeb;
         border: 1px solid #fde68a;
@@ -446,7 +459,6 @@ HTML_BASE_CSS = """
         gap: 10px;
     }
 
-    /* Grid e Cards de Serviços */
     .grid {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
@@ -535,6 +547,19 @@ HTML_BASE_CSS = """
     .descricao { font-size: 14px; color: #475569; line-height: 1.5; margin-bottom: 12px; }
     .preco { font-size: 21px; font-weight: 800; color: var(--accent); margin: 8px 0; }
     
+    .metrics-pill {
+        display: flex;
+        gap: 12px;
+        font-size: 11px;
+        color: var(--muted);
+        background: #f8fafc;
+        padding: 6px 10px;
+        border-radius: 6px;
+        margin-bottom: 10px;
+        border: 1px solid #e2e8f0;
+    }
+    .metrics-pill span { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
+
     .reviews-preview {
         background: #f8fafc;
         border-radius: 6px;
@@ -570,6 +595,8 @@ HTML_BASE_CSS = """
         display: flex;
         justify-content: space-between;
         align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
         margin-top: 12px;
         padding-top: 10px;
         border-top: 1px dashed #e2e8f0;
@@ -587,6 +614,21 @@ HTML_BASE_CSS = """
     }
     .action-link:hover { color: var(--primary); text-decoration: underline; }
     .action-vip { color: var(--vip-dark); }
+
+    .load-more-wrapper {
+        text-align: center;
+        margin: 30px 0 10px 0;
+    }
+
+    .alert-banner {
+        padding: 12px 16px;
+        border-radius: 8px;
+        margin-bottom: 18px;
+        font-weight: 600;
+        font-size: 14px;
+    }
+    .alert-error { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
+    .alert-success { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
 
     /* Modal Pop-up */
     .modal-overlay {
@@ -689,6 +731,81 @@ HTML_BASE_CSS = """
 </style>
 """
 
+HTML_CARDS_FRAGMENT = """
+{% for item in servicos %}
+<div class="card {{ 'destaque' if item.is_vip else '' }}">
+    {% if item.is_vip %}
+        <span class="badge-vip">★ PROFISSIONAL DESTAQUE</span>
+    {% endif %}
+    {% if item.imagem %}
+        <div class="card-img-wrapper">
+            <img src="{{ item.imagem }}" alt="{{ item.titulo }}" class="card-img" loading="lazy">
+        </div>
+    {% endif %}
+    <div class="card-body">
+        <div>
+            <div class="tags-row">
+                <span class="categoria">{{ item.categoria }}</span>
+                <span class="cidade-tag">📍 {{ item.cidade }}</span>
+                {% if item.total_aval > 0 %}
+                    <span class="rating-pill">★ {{ item.media_estrelas }} ({{ item.total_aval }})</span>
+                {% endif %}
+            </div>
+            <h3>{{ item.titulo }}</h3>
+            <p class="descricao">{{ item.descricao }}</p>
+            
+            {% if item.ultimo_comentario %}
+                <div class="reviews-preview">
+                    <em>"{{ item.ultimo_comentario.comentario }}"</em> — <strong>{{ item.ultimo_comentario.autor }}</strong>
+                </div>
+            {% endif %}
+        </div>
+
+        <div>
+            <div class="preco">{{ item.preco }}</div>
+            
+            <div class="metrics-pill">
+                <span>👁️ {{ item.visualizacoes }} visualizações</span>
+                {% if item.is_vip %}
+                    <span>💬 {{ item.cliques_wpp }} cliques no WhatsApp</span>
+                {% endif %}
+            </div>
+
+            <div class="footer-card">
+                <strong>Profissional:</strong> {{ item.nome }}<br>
+                <strong>Contato:</strong> {{ item.contato }}
+                
+                {% if item.is_vip and item.wpp_link %}
+                    <a href="/whatsapp/{{ item.id }}" target="_blank" class="btn-wpp">
+                        💬 Chamar no WhatsApp
+                    </a>
+                {% endif %}
+            </div>
+
+            <div class="card-actions-row">
+                <button onclick="abrirAvaliacao({{ item.id }}, '{{ item.titulo|replace("'", "") }}')" class="action-link">
+                    ⭐ Avaliar
+                </button>
+                <a href="https://api.whatsapp.com/send?text=Olha%20esse%20profissional%20que%20encontrei:%20*{{ item.titulo }}*%20({{ item.cidade }})%20-%20{{ item.preco }}.%20Veja%20mais%20em:%20{{ url_site }}" target="_blank" class="action-link">
+                    📤 Compartilhar
+                </a>
+                <a href="/editar/{{ item.id }}" class="action-link">
+                    ✏️ Editar
+                </a>
+                {% if not item.is_vip %}
+                    {% if item.pode_destacar %}
+                        <a href="/pagar/{{ item.id }}" class="action-link action-vip">⚡ Destacar ({{ item.vagas_cat }} vagas)</a>
+                    {% else %}
+                        <span style="color:#94a3b8; font-size:11px;">Topo Lotado</span>
+                    {% endif %}
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+{% endfor %}
+"""
+
 HTML_INDEX = """
 <!DOCTYPE html>
 <html lang="pt-BR">
@@ -735,8 +852,18 @@ HTML_INDEX = """
 <div class="container">
 
     {% if erro_vip %}
-        <div style="background:#fee2e2; color:#991b1b; padding:12px 16px; border-radius:8px; margin-bottom:18px; font-weight:600;">
+        <div class="alert-banner alert-error">
             ⚠️ Senha de acesso VIP incorreta. Assine o Destaque VIP em qualquer anúncio para receber a senha oficial!
+        </div>
+    {% endif %}
+
+    {% if msg_ok == 'editado' %}
+        <div class="alert-banner alert-success">
+            ✓ Anúncio atualizado com sucesso!
+        </div>
+    {% elif msg_ok == 'cadastrado' %}
+        <div class="alert-banner alert-success">
+            ✓ Seu anúncio foi publicado com sucesso! Guarde seu PIN de 4 dígitos caso precise editar depois.
         </div>
     {% endif %}
 
@@ -752,7 +879,7 @@ HTML_INDEX = """
     </a>
     {% endif %}
 
-    <!-- Mural de Clientes Procurando Serviço (Gatilho de Venda VIP) -->
+    <!-- Mural de Clientes Procurando Serviço -->
     {% if pedidos %}
     <div class="leads-section">
         <div class="leads-header">
@@ -829,75 +956,25 @@ HTML_INDEX = """
         <button onclick="abrirModal('modalCadastro')" class="btn btn-vip btn-sm">Garantir Minha Vaga</button>
     </div>
 
-    <!-- Lista de Serviços -->
-    <div class="grid">
-        {% for item in servicos %}
-        <div class="card {{ 'destaque' if item.is_vip else '' }}">
-            {% if item.is_vip %}
-                <span class="badge-vip">★ PROFISSIONAL DESTAQUE</span>
-            {% endif %}
-            {% if item.imagem %}
-                <div class="card-img-wrapper">
-                    <img src="{{ item.imagem }}" alt="{{ item.titulo }}" class="card-img">
-                </div>
-            {% endif %}
-            <div class="card-body">
-                <div>
-                    <div class="tags-row">
-                        <span class="categoria">{{ item.categoria }}</span>
-                        <span class="cidade-tag">📍 {{ item.cidade }}</span>
-                        {% if item.total_aval > 0 %}
-                            <span class="rating-pill">★ {{ item.media_estrelas }} ({{ item.total_aval }})</span>
-                        {% endif %}
-                    </div>
-                    <h3>{{ item.titulo }}</h3>
-                    <p class="descricao">{{ item.descricao }}</p>
-                    
-                    {% if item.ultimo_comentario %}
-                        <div class="reviews-preview">
-                            <em>"{{ item.ultimo_comentario.comentario }}"</em> — <strong>{{ item.ultimo_comentario.autor }}</strong>
-                        </div>
-                    {% endif %}
-                </div>
-
-                <div>
-                    <div class="preco">{{ item.preco }}</div>
-                    <div class="footer-card">
-                        <strong>Profissional:</strong> {{ item.nome }}<br>
-                        <strong>Contato:</strong> {{ item.contato }}
-                        
-                        {% if item.is_vip and item.wpp_link %}
-                            <a href="{{ item.wpp_link }}?text=Olá%20{{ item.nome }},%20vi%20seu%20anúncio%20no%20Guia%20de%20Serviços!" target="_blank" class="btn-wpp">
-                                💬 Chamar no WhatsApp
-                            </a>
-                        {% endif %}
-                    </div>
-
-                    <div class="card-actions-row">
-                        <button onclick="abrirAvaliacao({{ item.id }}, '{{ item.titulo|replace("'", "") }}')" class="action-link">
-                            ⭐ Avaliar
-                        </button>
-                        <a href="https://api.whatsapp.com/send?text=Olha%20esse%20profissional%20que%20encontrei:%20*{{ item.titulo }}*%20({{ item.cidade }})%20-%20{{ item.preco }}.%20Veja%20mais%20em:%20{{ url_site }}" target="_blank" class="action-link">
-                            📤 Compartilhar
-                        </a>
-                        {% if not item.is_vip %}
-                            {% if item.pode_destacar %}
-                                <a href="/pagar/{{ item.id }}" class="action-link action-vip">⚡ Destacar ({{ item.vagas_cat }} vagas)</a>
-                            {% else %}
-                                <span style="color:#94a3b8; font-size:11px;">Topo Lotado</span>
-                            {% endif %}
-                        {% endif %}
-                    </div>
-                </div>
-            </div>
-        </div>
+    <!-- Lista de Serviços (com Paginação Leve) -->
+    <div class="grid" id="gridServicos">
+        {% if servicos %}
+            """ + HTML_CARDS_FRAGMENT + """
         {% else %}
             <div class="card-box full-width" style="text-align:center;">
                 <p>Nenhum serviço encontrado neste filtro ainda.</p>
                 <button onclick="abrirModal('modalCadastro')" class="btn">Cadastrar Primeiro Serviço</button>
             </div>
-        {% endfor %}
+        {% endif %}
     </div>
+
+    {% if tem_mais %}
+    <div class="load-more-wrapper" id="wrapperCarregarMais">
+        <button onclick="carregarMais()" id="btnCarregarMais" class="btn" style="background: var(--primary); padding: 13px 28px;">
+            Carregar Mais Profissionais ↓
+        </button>
+    </div>
+    {% endif %}
 </div>
 
 <!-- MODAL 1: FORMULÁRIO DE CADASTRO DE SERVIÇO -->
@@ -937,11 +1014,15 @@ HTML_INDEX = """
                     <label>WhatsApp (com DDD):</label>
                     <input type="text" name="contato" required placeholder="Ex: (99) 99999-9999">
                 </div>
-                <div class="form-group full-width">
+                <div class="form-group">
+                    <label>Crie um PIN de 4 números (para editar depois):</label>
+                    <input type="text" name="pin_edicao" maxlength="4" pattern="[0-9]{4}" required placeholder="Ex: 1234">
+                </div>
+                <div class="form-group">
                     <label>Foto do Trabalho ou Cartão (Opcional):</label>
                     <input type="file" id="inputFoto" accept="image/*">
                     <input type="hidden" name="imagem_base64" id="imagemBase64">
-                    <small style="color:var(--muted);" id="statusFoto">A imagem aparecerá por inteiro no seu anúncio.</small>
+                    <small style="color:var(--muted);" id="statusFoto">Aparece inteira no anúncio.</small>
                 </div>
                 <div class="form-group full-width">
                     <label>Descrição do Serviço:</label>
@@ -1070,6 +1151,36 @@ window.onclick = function(event) {
     }
 }
 
+// Paginação dinâmica (Carregar Mais sem recarregar a página)
+let paginaAtual = 1;
+function carregarMais() {
+    const btn = document.getElementById('btnCarregarMais');
+    btn.innerText = "Carregando...";
+    btn.disabled = true;
+    paginaAtual += 1;
+    
+    const params = new URLSearchParams(window.location.search);
+    params.set('pagina', paginaAtual);
+    
+    fetch('/api/servicos?' + params.toString())
+        .then(r => r.json())
+        .then(data => {
+            if (data.html) {
+                document.getElementById('gridServicos').insertAdjacentHTML('beforeend', data.html);
+            }
+            if (!data.tem_mais) {
+                document.getElementById('wrapperCarregarMais').style.display = 'none';
+            } else {
+                btn.innerText = "Carregar Mais Profissionais ↓";
+                btn.disabled = false;
+            }
+        })
+        .catch(() => {
+            btn.innerText = "Tentar novamente";
+            btn.disabled = false;
+        });
+}
+
 document.getElementById('inputFoto').addEventListener('change', function(e) {
     const file = e.target.files[0];
     if (!file) return;
@@ -1086,7 +1197,7 @@ document.getElementById('inputFoto').addEventListener('change', function(e) {
             const ctx = canvas.getContext('2d');
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
             document.getElementById('imagemBase64').value = canvas.toDataURL('image/jpeg', 0.78);
-            document.getElementById('statusFoto').innerText = "✓ Foto pronta para publicação!";
+            document.getElementById('statusFoto').innerText = "✓ Foto pronta!";
         };
         img.src = event.target.result;
     };
@@ -1094,6 +1205,109 @@ document.getElementById('inputFoto').addEventListener('change', function(e) {
 });
 </script>
 
+</body>
+</html>
+"""
+
+HTML_EDITAR = """
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Editar Meu Anúncio</title>
+    """ + HTML_BASE_CSS + """
+</head>
+<body>
+<header>
+    <h1>Editar Meu Anúncio</h1>
+    <p>Atualize seus dados, preço ou foto usando seu PIN de 4 dígitos</p>
+</header>
+<div class="container" style="max-width: 620px;">
+    <div class="card-box">
+        <h2 style="margin-top:0;">Anúncio #{{ servico.id }}: {{ servico.titulo }}</h2>
+        {% if erro %}
+            <div class="alert-banner alert-error">{{ erro }}</div>
+        {% endif %}
+        
+        <form action="/editar/{{ servico.id }}" method="POST">
+            <div class="form-group" style="background:#fffbeb; padding:12px; border-radius:8px; border:1px solid #fde68a;">
+                <label style="color:#92400e;">🔑 Digite seu PIN de 4 dígitos para confirmar a edição:</label>
+                <input type="password" name="pin_digitado" maxlength="4" required placeholder="****" style="max-width:160px; font-weight:bold; letter-spacing:4px;">
+            </div>
+
+            <div class="form-grid">
+                <div class="form-group">
+                    <label>Seu Nome ou Empresa:</label>
+                    <input type="text" name="nome" value="{{ servico.nome }}" required>
+                </div>
+                <div class="form-group">
+                    <label>Título do Serviço:</label>
+                    <input type="text" name="titulo" value="{{ servico.titulo }}" required>
+                </div>
+                <div class="form-group">
+                    <label>Categoria:</label>
+                    <select name="categoria">
+                        {% for nome_cat, icone in categorias %}
+                            <option value="{{ nome_cat }}" {{ 'selected' if servico.categoria == nome_cat else '' }}>{{ icone }} {{ nome_cat }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Cidade:</label>
+                    <input type="text" name="cidade" value="{{ servico.cidade }}" required>
+                </div>
+                <div class="form-group">
+                    <label>Preço (ou valor inicial):</label>
+                    <input type="text" name="preco" value="{{ servico.preco }}" required>
+                </div>
+                <div class="form-group">
+                    <label>WhatsApp (com DDD):</label>
+                    <input type="text" name="contato" value="{{ servico.contato }}" required>
+                </div>
+                <div class="form-group full-width">
+                    <label>Trocar Foto (Opcional — deixe vazio para manter a atual):</label>
+                    <input type="file" id="inputFotoEdit" accept="image/*">
+                    <input type="hidden" name="imagem_base64" id="imagemBase64Edit">
+                    <small style="color:var(--muted);" id="statusFotoEdit">A foto atual será mantida se você não enviar outra.</small>
+                </div>
+                <div class="form-group full-width">
+                    <label>Descrição do Serviço:</label>
+                    <textarea name="descricao" rows="3" required>{{ servico.descricao }}</textarea>
+                </div>
+            </div>
+
+            <button type="submit" class="btn" style="width:100%; padding:14px; font-size:16px;">Salvar Alterações</button>
+        </form>
+        <div style="text-align:center; margin-top:16px;">
+            <a href="/" style="color:var(--muted); text-decoration:none; font-size:14px;">← Cancelar e voltar para a Vitrine</a>
+        </div>
+    </div>
+</div>
+<script>
+document.getElementById('inputFotoEdit').addEventListener('change', function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    document.getElementById('statusFotoEdit').innerText = "Processando nova foto...";
+    const reader = new FileReader();
+    reader.onload = function(event) {
+        const img = new Image();
+        img.onload = function() {
+            const canvas = document.createElement('canvas');
+            const maxWidth = 700;
+            const scale = img.width > maxWidth ? maxWidth / img.width : 1;
+            canvas.width = img.width * scale;
+            canvas.height = img.height * scale;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            document.getElementById('imagemBase64Edit').value = canvas.toDataURL('image/jpeg', 0.78);
+            document.getElementById('statusFotoEdit').innerText = "✓ Nova foto pronta!";
+        };
+        img.src = event.target.result;
+    };
+    reader.readAsDataURL(file);
+});
+</script>
 </body>
 </html>
 """
@@ -1125,7 +1339,6 @@ HTML_PAGAR = """
         {% else %}
             <p style="font-size:14px; color:#475569;">Restam apenas <strong>{{ vagas_restantes }} vagas VIP</strong> para <em>{{ servico.categoria }}</em>. Escolha a duração do seu destaque:</p>
 
-            <!-- Seletor de Plano 30d vs 90d -->
             <div class="plan-selector">
                 <a href="/pagar/{{ servico.id }}?plano=30" class="plan-card {{ 'active' if plano == '30' else '' }}">
                     <div style="font-weight:bold; font-size:15px;">Plano Mensal</div>
@@ -1204,7 +1417,7 @@ HTML_ADMIN = """
 </div>
 <header>
     <h1>Painel de Controle</h1>
-    <p>Gerencie anúncios VIP, pedidos de orçamento, patrocinadores e Pix</p>
+    <p>Gerencie anúncios VIP, métricas, pedidos de orçamento e Pix</p>
 </header>
 <div class="container">
     {% if not logado %}
@@ -1276,9 +1489,9 @@ HTML_ADMIN = """
             <table>
                 <thead>
                     <tr>
-                        <th>ID</th>
+                        <th>ID / PIN</th>
                         <th>Profissional / Serviço</th>
-                        <th>Cidade / Contato</th>
+                        <th>Métricas</th>
                         <th>Status VIP</th>
                         <th>Ações</th>
                     </tr>
@@ -1286,14 +1499,16 @@ HTML_ADMIN = """
                 <tbody>
                     {% for s in servicos %}
                     <tr>
-                        <td><strong>#{{ s.id }}</strong></td>
                         <td>
-                            <strong>{{ s.titulo }}</strong><br>
-                            <small>{{ s.nome }} • {{ s.categoria }} • {{ s.preco }}</small>
+                            <strong>#{{ s.id }}</strong><br>
+                            <small style="color:var(--muted);">PIN: {{ s.pin_edicao }}</small>
                         </td>
                         <td>
-                            {{ s.cidade }}<br>
-                            <small>{{ s.contato }}</small>
+                            <strong>{{ s.titulo }}</strong><br>
+                            <small>{{ s.nome }} • {{ s.cidade }} • {{ s.contato }}</small>
+                        </td>
+                        <td>
+                            <small>👁️ {{ s.visualizacoes }} views<br>💬 {{ s.cliques_wpp }} cliques</small>
                         </td>
                         <td>
                             {% if s.is_vip %}
@@ -1351,31 +1566,21 @@ HTML_ADMIN = """
 """
 
 # =====================================================================
-# ROTAS DO SISTEMA
+# FUNÇÃO AUXILIAR PARA BUSCAR E PAGINAR SERVIÇOS
 # =====================================================================
 
-@app.route("/")
-def index():
-    categoria = request.args.get("categoria", "")
-    cidade = request.args.get("cidade", "")
-    busca = request.args.get("busca", "").strip()
-    erro_vip = request.args.get("erro_vip") == "1"
-    cfg = get_config()
-    db = DBWrapper()
-    
-    # Conta quantos VIPs ativos existem por categoria para aplicar escassez
-    todos_rows = db.execute("SELECT * FROM servicos").fetchall()
+def obter_servicos_paginados(db, categoria, cidade, busca, pagina, contar_views=True):
+    todos_rows = db.execute("SELECT id, cidade, categoria, destaque_ate FROM servicos").fetchall()
     agora = datetime.now()
     vips_por_cat = {}
     cidades_set = set()
-    
+
     for r in todos_rows:
         cidades_set.add(r["cidade"].strip())
         if r["destaque_ate"] and datetime.fromisoformat(r["destaque_ate"]) > agora:
             cat = r["categoria"]
             vips_por_cat[cat] = vips_por_cat.get(cat, 0) + 1
 
-    # Query filtrada
     query = "SELECT * FROM servicos WHERE 1=1"
     params = []
     if categoria:
@@ -1388,23 +1593,36 @@ def index():
         query += " AND (titulo LIKE ? OR descricao LIKE ? OR cidade LIKE ? OR nome LIKE ?)"
         termo = f"%{busca}%"
         params.extend([termo, termo, termo, termo])
-        
+
     query += " ORDER BY id DESC"
     rows = db.execute(query, params).fetchall()
-    total = len(todos_rows)
 
-    lista_servicos = []
+    lista_completa = []
     for r in rows:
         item = dict(r)
         is_vip = bool(item["destaque_ate"] and datetime.fromisoformat(item["destaque_ate"]) > agora)
         item["is_vip"] = is_vip
         item["wpp_link"] = formatar_whatsapp(item["contato"])
-        
+        item["visualizacoes"] = (item.get("visualizacoes") or 0) + (1 if contar_views else 0)
+        item["cliques_wpp"] = item.get("cliques_wpp") or 0
+
         ocupadas = vips_por_cat.get(item["categoria"], 0)
         restantes = max(0, LIMITE_VAGAS_VIP - ocupadas)
         item["vagas_cat"] = restantes
         item["pode_destacar"] = restantes > 0
-        
+        lista_completa.append(item)
+
+    lista_completa.sort(key=lambda x: x["is_vip"], reverse=True)
+
+    inicio = (pagina - 1) * ITENS_POR_PAGINA
+    fim = inicio + ITENS_POR_PAGINA
+    fatia = lista_completa[inicio:fim]
+    tem_mais = len(lista_completa) > fim
+
+    # Carrega avaliações e incrementa visualizações apenas dos cards exibidos nesta página
+    ids_exibidos = []
+    for item in fatia:
+        ids_exibidos.append(item["id"])
         avals = db.execute("SELECT * FROM avaliacoes WHERE servico_id = ? ORDER BY id DESC", (item["id"],)).fetchall()
         item["total_aval"] = len(avals)
         if avals:
@@ -1416,11 +1634,36 @@ def index():
             item["media_estrelas"] = "0"
             item["ultimo_comentario"] = None
 
-        lista_servicos.append(item)
+    if contar_views and ids_exibidos:
+        for sid in ids_exibidos:
+            db.execute("UPDATE servicos SET visualizacoes = COALESCE(visualizacoes, 0) + 1 WHERE id = ?", (sid,))
+        db.commit()
 
-    lista_servicos.sort(key=lambda x: x["is_vip"], reverse=True)
+    return fatia, tem_mais, len(todos_rows), sorted(list(cidades_set)), vips_por_cat
 
-    # Pedidos de Orçamento recentes (últimos 6)
+# =====================================================================
+# ROTAS DO SISTEMA
+# =====================================================================
+
+@app.route("/ping")
+def ping():
+    """Rota ultraleve para manter o servidor acordado 24h via UptimeRobot."""
+    return "OK", 200
+
+@app.route("/")
+def index():
+    categoria = request.args.get("categoria", "")
+    cidade = request.args.get("cidade", "")
+    busca = request.args.get("busca", "").strip()
+    erro_vip = request.args.get("erro_vip") == "1"
+    msg_ok = request.args.get("ok", "")
+    cfg = get_config()
+    db = DBWrapper()
+
+    fatia, tem_mais, total, cidades_disponiveis, vips_por_cat = obter_servicos_paginados(
+        db, categoria, cidade, busca, pagina=1, contar_views=True
+    )
+
     pedidos_rows = db.execute("SELECT * FROM pedidos ORDER BY id DESC LIMIT 6").fetchall()
     pedidos = []
     for p in pedidos_rows:
@@ -1444,10 +1687,11 @@ def index():
 
     return render_template_string(
         HTML_INDEX,
-        servicos=lista_servicos,
+        servicos=fatia,
+        tem_mais=tem_mais,
         pedidos=pedidos,
         categorias=categorias,
-        cidades_disponiveis=sorted(list(cidades_set)),
+        cidades_disponiveis=cidades_disponiveis,
         cat_atual=categoria,
         cidade_atual=cidade,
         busca_atual=busca,
@@ -1457,8 +1701,45 @@ def index():
         vagas_restantes=vagas_restantes,
         vip_desbloqueado=session.get("vip_desbloqueado", False),
         erro_vip=erro_vip,
+        msg_ok=msg_ok,
         url_site=request.host_url
     )
+
+@app.route("/api/servicos")
+def api_servicos():
+    categoria = request.args.get("categoria", "")
+    cidade = request.args.get("cidade", "")
+    busca = request.args.get("busca", "").strip()
+    pagina = max(1, int(request.args.get("pagina", 1)))
+    
+    db = DBWrapper()
+    fatia, tem_mais, _, _, _ = obter_servicos_paginados(
+        db, categoria, cidade, busca, pagina=pagina, contar_views=True
+    )
+    db.close()
+
+    html_cards = render_template_string(HTML_CARDS_FRAGMENT, servicos=fatia, url_site=request.host_url)
+    return jsonify({"html": html_cards, "tem_mais": tem_mais})
+
+@app.route("/whatsapp/<int:servico_id>")
+def abrir_whatsapp(servico_id):
+    """Contabiliza cliques reais no botão do WhatsApp e redireciona o cliente."""
+    db = DBWrapper()
+    servico = db.execute("SELECT nome, contato FROM servicos WHERE id = ?", (servico_id,)).fetchone()
+    if not servico:
+        db.close()
+        return redirect(url_for("index"))
+
+    db.execute("UPDATE servicos SET cliques_wpp = COALESCE(cliques_wpp, 0) + 1 WHERE id = ?", (servico_id,))
+    db.commit()
+    db.close()
+
+    wpp_base = formatar_whatsapp(servico["contato"])
+    if not wpp_base:
+        return redirect(url_for("index"))
+
+    texto = quote(f"Olá {servico['nome']}, vi seu anúncio no Guia Regional de Serviços!")
+    return redirect(f"{wpp_base}?text={texto}")
 
 @app.route("/adicionar", methods=["POST"])
 def adicionar():
@@ -1469,20 +1750,66 @@ def adicionar():
     preco = request.form.get("preco")
     descricao = request.form.get("descricao")
     contato = request.form.get("contato")
+    pin_edicao = re.sub(r"\D", "", request.form.get("pin_edicao", "0000"))[:4].zfill(4)
     imagem = request.form.get("imagem_base64") or None
     quer_destaque = request.form.get("quer_destaque")
 
     db = DBWrapper()
     novo_id = db.insert_returning_id("""
-        INSERT INTO servicos (nome, titulo, categoria, cidade, preco, descricao, contato, imagem, destaque_ate, criado_em)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)
-    """, (nome, titulo, categoria, cidade, preco, descricao, contato, imagem, datetime.now().isoformat()))
+        INSERT INTO servicos (nome, titulo, categoria, cidade, preco, descricao, contato, imagem, destaque_ate, criado_em, visualizacoes, cliques_wpp, pin_edicao)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, 0, 0, ?)
+    """, (nome, titulo, categoria, cidade, preco, descricao, contato, imagem, datetime.now().isoformat(), pin_edicao))
     db.commit()
     db.close()
 
     if quer_destaque == "1":
         return redirect(url_for("pagar", servico_id=novo_id))
-    return redirect(url_for("index"))
+    return redirect(url_for("index", ok="cadastrado"))
+
+@app.route("/editar/<int:servico_id>", methods=["GET", "POST"])
+def editar_servico(servico_id):
+    categorias = [
+        ("Reformas e Reparos", "🛠️"),
+        ("Tecnologia e Informática", "💻"),
+        ("Design e Marketing", "🎨"),
+        ("Aulas e Consultoria", "📚"),
+        ("Saúde e Bem-estar", "🏥"),
+        ("Fretes e Mudanças", "🚚"),
+        ("Outros Serviços", "⚡")
+    ]
+    db = DBWrapper()
+    servico = db.execute("SELECT * FROM servicos WHERE id = ?", (servico_id,)).fetchone()
+    if not servico:
+        db.close()
+        return redirect(url_for("index"))
+
+    erro = None
+    if request.method == "POST":
+        pin_digitado = request.form.get("pin_digitado", "").strip()
+        pin_salvo = servico["pin_edicao"] or "0000"
+        if pin_digitado != pin_salvo and pin_digitado != SENHA_ADMIN:
+            erro = "PIN incorreto! Verifique os 4 dígitos criados no cadastro."
+        else:
+            nome = request.form.get("nome")
+            titulo = request.form.get("titulo")
+            categoria = request.form.get("categoria")
+            cidade = request.form.get("cidade").strip()
+            preco = request.form.get("preco")
+            contato = request.form.get("contato")
+            descricao = request.form.get("descricao")
+            nova_img = request.form.get("imagem_base64") or servico["imagem"]
+
+            db.execute("""
+                UPDATE servicos
+                SET nome = ?, titulo = ?, categoria = ?, cidade = ?, preco = ?, contato = ?, descricao = ?, imagem = ?
+                WHERE id = ?
+            """, (nome, titulo, categoria, cidade, preco, contato, descricao, nova_img, servico_id))
+            db.commit()
+            db.close()
+            return redirect(url_for("index", ok="editado"))
+
+    db.close()
+    return render_template_string(HTML_EDITAR, servico=servico, categorias=categorias, erro=erro)
 
 @app.route("/pedir_orcamento", methods=["POST"])
 def pedir_orcamento():
@@ -1546,7 +1873,6 @@ def pagar(servico_id):
         db.close()
         return redirect(url_for("index"))
         
-    # Verifica vagas VIP disponíveis na categoria
     rows_cat = db.execute("SELECT destaque_ate FROM servicos WHERE categoria = ?", (servico["categoria"],)).fetchall()
     db.close()
     
@@ -1598,6 +1924,9 @@ def admin():
     for r in rows:
         item = dict(r)
         item["is_vip"] = bool(item["destaque_ate"] and datetime.fromisoformat(item["destaque_ate"]) > agora)
+        item["visualizacoes"] = item.get("visualizacoes") or 0
+        item["cliques_wpp"] = item.get("cliques_wpp") or 0
+        item["pin_edicao"] = item.get("pin_edicao") or "0000"
         servicos.append(item)
 
     return render_template_string(HTML_ADMIN, logado=True, servicos=servicos, pedidos=pedidos, cfg=cfg, salvo=salvo)
