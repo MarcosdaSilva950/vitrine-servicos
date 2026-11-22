@@ -1,6 +1,7 @@
 import os
 import re
 import sqlite3
+import requests
 from datetime import datetime, timedelta
 from urllib.parse import quote
 from flask import Flask, render_template_string, request, redirect, url_for, session, jsonify
@@ -10,7 +11,7 @@ app = Flask(__name__)
 # =====================================================================
 # CONFIGURAÇÕES INICIAIS (SUAS CREDENCIAIS)
 # =====================================================================
-app.secret_key = "chave_secreta_vitrine_marcao_2026_pro_v2"
+app.secret_key = "chave_secreta_vitrine_marcao_2026_pro_v3"
 SENHA_ADMIN = "22041988"
 
 PIX_PADRAO = "997ef3d7-4a1c-436f-b4fa-2c668ad2478c"
@@ -107,6 +108,18 @@ def init_db():
         )
     """)
     db.execute("""
+        CREATE TABLE IF NOT EXISTS pagamentos_pix (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            mp_payment_id TEXT UNIQUE,
+            servico_id INTEGER NOT NULL,
+            dias INTEGER NOT NULL,
+            valor REAL NOT NULL,
+            status TEXT DEFAULT 'pending',
+            qr_code TEXT,
+            criado_em TEXT NOT NULL
+        )
+    """)
+    db.execute("""
         CREATE TABLE IF NOT EXISTS config (
             chave TEXT PRIMARY KEY,
             valor TEXT NOT NULL
@@ -114,7 +127,6 @@ def init_db():
     """)
     db.commit()
 
-    # Migração automática segura para bancos já existentes (Neon / SQLite)
     colunas_novas = [
         ("visualizacoes", "INTEGER DEFAULT 0"),
         ("cliques_wpp", "INTEGER DEFAULT 0"),
@@ -129,6 +141,7 @@ def init_db():
 
     padroes = {
         "chave_pix": PIX_PADRAO,
+        "mp_access_token": os.environ.get("MP_ACCESS_TOKEN", ""),
         "seu_whatsapp": WPP_PADRAO,
         "valor_30d": VALOR_30D_PADRAO,
         "valor_90d": VALOR_90D_PADRAO,
@@ -157,17 +170,18 @@ def formatar_whatsapp(contato):
         return f"https://wa.me/{numeros}"
     return None
 
+def extrair_valor_float(valor_texto):
+    limpo = re.sub(r"[^\d,\.]", "", valor_texto).replace(",", ".")
+    try:
+        return round(float(limpo), 2)
+    except ValueError:
+        return 19.90
+
 def gerar_pix_copia_cola(chave_pix, valor_texto, txid="VITRINEVIP"):
     def emv(tag, val):
         return f"{tag}{len(val):02d}{val}"
 
-    limpo = re.sub(r"[^\d,\.]", "", valor_texto).replace(",", ".")
-    try:
-        valor_float = float(limpo)
-        valor_str = f"{valor_float:.2f}"
-    except ValueError:
-        valor_str = "19.90"
-
+    valor_str = f"{extrair_valor_float(valor_texto):.2f}"
     merchant_account = emv("00", "br.gov.bcb.pix") + emv("01", chave_pix.strip())
     payload = (
         emv("00", "01") +
@@ -192,6 +206,18 @@ def gerar_pix_copia_cola(chave_pix, valor_texto, txid="VITRINEVIP"):
                 crc = (crc << 1) & 0xFFFF
 
     return f"{payload}{crc:04X}"
+
+def ativar_destaque_automatico(db, servico_id, dias):
+    """Ativa ou estende o destaque VIP no banco de dados."""
+    row = db.execute("SELECT destaque_ate FROM servicos WHERE id = ?", (servico_id,)).fetchone()
+    agora = datetime.now()
+    base = agora
+    if row and row["destaque_ate"]:
+        atual = datetime.fromisoformat(row["destaque_ate"])
+        if atual > agora:
+            base = atual
+    nova_validade = (base + timedelta(days=int(dias))).isoformat()
+    db.execute("UPDATE servicos SET destaque_ate = ? WHERE id = ?", (nova_validade, servico_id))
 
 # =====================================================================
 # CSS E TEMPLATES PROFISSIONAIS
@@ -865,6 +891,10 @@ HTML_INDEX = """
         <div class="alert-banner alert-success">
             ✓ Seu anúncio foi publicado com sucesso! Guarde seu PIN de 4 dígitos caso precise editar depois.
         </div>
+    {% elif msg_ok == 'vip_ativado' %}
+        <div class="alert-banner alert-success">
+            🎉 Pagamento confirmado automaticamente! Seu anúncio já está no TOPO com Selo VIP e o mural de clientes foi liberado!
+        </div>
     {% endif %}
 
     <!-- Banner de Patrocinador Local -->
@@ -1035,7 +1065,7 @@ HTML_INDEX = """
                     <input type="checkbox" name="quer_destaque" value="1">
                     <span>
                         <strong>Quero Destaque VIP no Topo (a partir de {{ cfg.valor_30d }})</strong><br>
-                        <small style="font-weight:normal;">Receba até <strong>5x mais contatos</strong>: anúncio fixado no topo com borda dourada, botão direto do WhatsApp e acesso liberado ao mural de clientes buscando serviço!</small>
+                        <small style="font-weight:normal;">Liberação imediata após o Pix: anúncio fixado no topo com borda dourada, botão direto do WhatsApp e acesso liberado ao mural de clientes buscando serviço!</small>
                     </span>
                 </label>
             </div>
@@ -1094,7 +1124,7 @@ HTML_INDEX = """
         <form action="/desbloquear_vip" method="POST" style="margin-top:15px; text-align:left;">
             <div class="form-group">
                 <label>Já é VIP? Digite sua Chave de Acesso:</label>
-                <input type="password" name="senha_vip" required placeholder="Digite a senha recebida no WhatsApp">
+                <input type="password" name="senha_vip" required placeholder="Digite a senha VIP">
             </div>
             <button type="submit" class="btn btn-vip" style="width:100%;">Liberar Contatos dos Clientes</button>
         </form>
@@ -1151,7 +1181,6 @@ window.onclick = function(event) {
     }
 }
 
-// Paginação dinâmica (Carregar Mais sem recarregar a página)
 let paginaAtual = 1;
 function carregarMais() {
     const btn = document.getElementById('btnCarregarMais');
@@ -1318,13 +1347,13 @@ HTML_PAGAR = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ativar Destaque VIP</title>
+    <title>Ativar Destaque VIP Automático</title>
     """ + HTML_BASE_CSS + """
 </head>
 <body>
 <header>
     <h1>Destacar Anúncio no Topo</h1>
-    <p>Escolha seu plano e multiplique seus contatos na região</p>
+    <p>Liberação imediata e automática assim que o Pix for pago</p>
 </header>
 <div class="container" style="max-width: 600px;">
     <div class="card-box" style="text-align: center;">
@@ -1333,23 +1362,23 @@ HTML_PAGAR = """
         {% if vagas_restantes <= 0 %}
             <div style="background:#fee2e2; color:#991b1b; padding:18px; border-radius:8px; margin:20px 0;">
                 <strong>⚠️ Vagas VIP Esgotadas nesta Categoria!</strong><br>
-                Todas as {{ limite_vagas }} vagas de destaque para <em>{{ servico.categoria }}</em> estão ocupadas no momento. Tente novamente em breve!
+                Todas as {{ limite_vagas }} vagas de destaque para <em>{{ servico.categoria }}</em> estão ocupadas no momento.
             </div>
             <a href="/" class="btn">← Voltar para a Vitrine</a>
         {% else %}
-            <p style="font-size:14px; color:#475569;">Restam apenas <strong>{{ vagas_restantes }} vagas VIP</strong> para <em>{{ servico.categoria }}</em>. Escolha a duração do seu destaque:</p>
+            <p style="font-size:14px; color:#475569;">Restam apenas <strong>{{ vagas_restantes }} vagas VIP</strong> para <em>{{ servico.categoria }}</em>. Escolha a duração:</p>
 
             <div class="plan-selector">
                 <a href="/pagar/{{ servico.id }}?plano=30" class="plan-card {{ 'active' if plano == '30' else '' }}">
                     <div style="font-weight:bold; font-size:15px;">Plano Mensal</div>
                     <div style="font-size:24px; font-weight:800; color:var(--accent); margin:6px 0;">{{ cfg.valor_30d }}</div>
-                    <div style="font-size:12px; color:var(--muted);">30 dias no topo + Acesso Clientes</div>
+                    <div style="font-size:12px; color:var(--muted);">30 dias no topo + Mural Clientes</div>
                 </a>
                 <a href="/pagar/{{ servico.id }}?plano=90" class="plan-card {{ 'active' if plano == '90' else '' }}">
                     <span class="plan-tag">MAIS ESCOLHIDO</span>
                     <div style="font-weight:bold; font-size:15px;">Plano Trimestral</div>
                     <div style="font-size:24px; font-weight:800; color:var(--accent); margin:6px 0;">{{ cfg.valor_90d }}</div>
-                    <div style="font-size:12px; color:var(--muted);">90 dias no topo + Acesso Clientes</div>
+                    <div style="font-size:12px; color:var(--muted);">90 dias no topo + Mural Clientes</div>
                 </a>
             </div>
             
@@ -1357,23 +1386,38 @@ HTML_PAGAR = """
                 <p style="margin:0 0 5px 0; font-size:13px; color:var(--muted);">Pix Copia e Cola ({{ dias_escolhidos }} dias — Valor Travado):</p>
                 <div style="font-size:28px; font-weight:bold; color:var(--accent); margin-bottom:12px;">{{ valor_escolhido }}</div>
                 
+                {% if mp_qr_base64 %}
+                    <img src="data:image/png;base64,{{ mp_qr_base64 }}" alt="QR Code Pix" style="width:190px; height:190px; margin:0 auto 12px auto; display:block; border:1px solid #e2e8f0; border-radius:8px; padding:6px; background:white;">
+                {% endif %}
+
                 <input type="text" value="{{ pix_copia_cola }}" id="pixCopiaCola" readonly style="text-align:center; font-size:12px; background:white; color:#334155;">
                 <button onclick="copiarCodigo('pixCopiaCola', 'Código Pix Copia e Cola copiado! Abra o app do seu banco e escolha Pix Copia e Cola.')" class="btn" style="margin-top:10px; background:var(--secondary); width:100%;">
                     📋 Copiar Pix Copia e Cola ({{ valor_escolhido }})
                 </button>
-
-                <p style="margin:14px 0 5px 0; font-size:12px; color:var(--muted);">Ou Chave Pix avulsa:</p>
-                <input type="text" value="{{ cfg.chave_pix }}" id="chavePix" readonly style="text-align:center; font-weight:bold; font-size:13px; background:white;">
-                <button onclick="copiarCodigo('chavePix', 'Chave Pix copiada!')" class="btn" style="margin-top:6px; background:#64748b; width:100%; padding:8px; font-size:12px;">
-                    Copiar Apenas a Chave
-                </button>
             </div>
 
-            <p style="font-size:14px; color:#475569;">Após o pagamento, envie o comprovante para liberar seu destaque e receber sua <strong>Senha de Acesso aos Clientes</strong>:</p>
-            
-            <a href="https://wa.me/{{ cfg.seu_whatsapp }}?text=Olá!%20Acabei%20de%20fazer%20o%20Pix%20de%20{{ valor_escolhido }}%20(Plano%20{{ dias_escolhidos }}%20dias)%20para%20destacar%20o%20anúncio%20ID%20%23{{ servico.id }}%20({{ servico.titulo }}).%20Segue%20o%20comprovante:" target="_blank" class="btn btn-vip" style="width:100%; padding:14px; font-size:16px;">
-                Enviar Comprovante no WhatsApp
-            </a>
+            {% if mp_payment_id %}
+                <div id="statusPagamentoBox" style="background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af; padding:14px; border-radius:8px; font-size:14px; font-weight:600; margin-bottom:15px;">
+                    ⏳ Aguardando confirmação automática do pagamento...<br>
+                    <small style="font-weight:normal;">Assim que você pagar no app do banco, esta tela liberará seu destaque VIP sozinha em alguns segundos!</small>
+                </div>
+                <script>
+                    setInterval(function() {
+                        fetch('/api/verificar_pix/{{ mp_payment_id }}')
+                            .then(r => r.json())
+                            .then(data => {
+                                if (data.pago) {
+                                    window.location.href = "/?ok=vip_ativado";
+                                }
+                            });
+                    }, 3000);
+                </script>
+            {% else %}
+                <p style="font-size:14px; color:#475569;">Após o pagamento, envie o comprovante para liberar seu destaque:</p>
+                <a href="https://wa.me/{{ cfg.seu_whatsapp }}?text=Olá!%20Acabei%20de%20fazer%20o%20Pix%20de%20{{ valor_escolhido }}%20(Plano%20{{ dias_escolhidos }}%20dias)%20para%20destacar%20o%20anúncio%20ID%20%23{{ servico.id }}%20({{ servico.titulo }}).%20Segue%20o%20comprovante:" target="_blank" class="btn btn-vip" style="width:100%; padding:14px; font-size:16px;">
+                    Enviar Comprovante no WhatsApp
+                </a>
+            {% endif %}
             
             <br><br>
             <a href="/" style="color:var(--muted); text-decoration:none; font-size:14px;">← Voltar para a Vitrine</a>
@@ -1417,7 +1461,7 @@ HTML_ADMIN = """
 </div>
 <header>
     <h1>Painel de Controle</h1>
-    <p>Gerencie anúncios VIP, métricas, pedidos de orçamento e Pix</p>
+    <p>Gerencie anúncios VIP, pagamentos automáticos, métricas e Pix</p>
 </header>
 <div class="container">
     {% if not logado %}
@@ -1433,14 +1477,19 @@ HTML_ADMIN = """
             </form>
         </div>
     {% else %}
-        <!-- Configurações de Lucro -->
+        <!-- Configurações de Lucro e Automação -->
         <div class="card-box">
-            <h2 style="margin-top:0;">Configurações de Lucro, Planos e Patrocinador</h2>
+            <h2 style="margin-top:0;">Configurações de Lucro, Automação Pix e Patrocinador</h2>
             {% if salvo %}<p style="color:var(--accent); font-weight:bold;">✓ Configurações salvas com sucesso!</p>{% endif %}
             <form action="/admin/config" method="POST">
                 <div class="form-grid">
+                    <div class="form-group full-width" style="background:#f0fdf4; padding:14px; border-radius:8px; border:1px solid #bbf7d0;">
+                        <label style="color:#166534;">⚡ Access Token Mercado Pago (Para liberação 100% automática do Pix sem precisar aprovar):</label>
+                        <input type="text" name="mp_access_token" value="{{ cfg.mp_access_token }}" placeholder="APP_USR-0000000000000000-...">
+                        <small style="color:#15803d;">Cole seu Token de Produção do Mercado Pago acima. Se deixar vazio, o sistema usa a Chave Pix manual abaixo.</small>
+                    </div>
                     <div class="form-group">
-                        <label>Sua Chave Pix Completa:</label>
+                        <label>Chave Pix Manual (Plano B):</label>
                         <input type="text" name="chave_pix" value="{{ cfg.chave_pix }}" required>
                     </div>
                     <div class="form-group">
@@ -1456,7 +1505,7 @@ HTML_ADMIN = """
                         <input type="text" name="valor_90d" value="{{ cfg.valor_90d }}" required>
                     </div>
                     <div class="form-group">
-                        <label>Senha VIP (para liberar mural de clientes aos pagantes):</label>
+                        <label>Senha VIP (liberada automaticamente após o Pix):</label>
                         <input type="text" name="senha_vip_clientes" value="{{ cfg.senha_vip_clientes }}" required>
                     </div>
                     <div class="form-group">
@@ -1619,7 +1668,6 @@ def obter_servicos_paginados(db, categoria, cidade, busca, pagina, contar_views=
     fatia = lista_completa[inicio:fim]
     tem_mais = len(lista_completa) > fim
 
-    # Carrega avaliações e incrementa visualizações apenas dos cards exibidos nesta página
     ids_exibidos = []
     for item in fatia:
         ids_exibidos.append(item["id"])
@@ -1647,7 +1695,6 @@ def obter_servicos_paginados(db, categoria, cidade, busca, pagina, contar_views=
 
 @app.route("/ping")
 def ping():
-    """Rota ultraleve para manter o servidor acordado 24h via UptimeRobot."""
     return "OK", 200
 
 @app.route("/")
@@ -1723,7 +1770,6 @@ def api_servicos():
 
 @app.route("/whatsapp/<int:servico_id>")
 def abrir_whatsapp(servico_id):
-    """Contabiliza cliques reais no botão do WhatsApp e redireciona o cliente."""
     db = DBWrapper()
     servico = db.execute("SELECT nome, contato FROM servicos WHERE id = ?", (servico_id,)).fetchone()
     if not servico:
@@ -1874,20 +1920,66 @@ def pagar(servico_id):
         return redirect(url_for("index"))
         
     rows_cat = db.execute("SELECT destaque_ate FROM servicos WHERE categoria = ?", (servico["categoria"],)).fetchall()
-    db.close()
     
     agora = datetime.now()
     ocupadas = sum(1 for r in rows_cat if r["destaque_ate"] and datetime.fromisoformat(r["destaque_ate"]) > agora)
     vagas_restantes = max(0, LIMITE_VAGAS_VIP - ocupadas)
     
     valor_escolhido = cfg["valor_90d"] if plano == "90" else cfg["valor_30d"]
-    dias_escolhidos = "90" if plano == "90" else "30"
-    
-    pix_copia_cola = gerar_pix_copia_cola(
-        cfg["chave_pix"],
-        valor_escolhido,
-        txid=f"VIP{dias_escolhidos}ID{servico_id}"
-    )
+    dias_escolhidos = 90 if plano == "90" else 30
+    valor_float = extrair_valor_float(valor_escolhido)
+
+    mp_token = cfg.get("mp_access_token", "").strip()
+    mp_payment_id = None
+    mp_qr_base64 = None
+    pix_copia_cola = ""
+
+    # Se o Access Token do Mercado Pago estiver configurado, cria Pix automático com baixa instantânea
+    if mp_token and vagas_restantes > 0:
+        try:
+            webhook_url = request.url_root.rstrip("/") + "/webhook/mercadopago"
+            headers = {
+                "Authorization": f"Bearer {mp_token}",
+                "Content-Type": "application/json",
+                "X-Idempotency-Key": f"vitrine-{servico_id}-{dias_escolhidos}-{int(agora.timestamp())}"
+            }
+            payload_mp = {
+                "transaction_amount": valor_float,
+                "description": f"Destaque VIP {dias_escolhidos}d - Anuncio #{servico_id}",
+                "payment_method_id": "pix",
+                "payer": {
+                    "email": f"anuncio{servico_id}@vitrineservicos.com.br",
+                    "first_name": servico["nome"][:30]
+                },
+                "notification_url": webhook_url,
+                "external_reference": f"{servico_id}:{dias_escolhidos}"
+            }
+            resp = requests.post("https://api.mercadopago.com/v1/payments", json=payload_mp, headers=headers, timeout=10)
+            if resp.status_code in (200, 201):
+                dados = resp.json()
+                mp_payment_id = str(dados.get("id"))
+                tx_data = dados.get("point_of_interaction", {}).get("transaction_data", {})
+                pix_copia_cola = tx_data.get("qr_code", "")
+                mp_qr_base64 = tx_data.get("qr_code_base64", "")
+
+                db.execute("""
+                    INSERT INTO pagamentos_pix (mp_payment_id, servico_id, dias, valor, status, qr_code, criado_em)
+                    VALUES (?, ?, ?, ?, 'pending', ?, ?)
+                """, (mp_payment_id, servico_id, dias_escolhidos, valor_float, pix_copia_cola, agora.isoformat()))
+                db.commit()
+        except Exception:
+            mp_payment_id = None
+
+    # Plano B: Se não tiver Mercado Pago configurado, usa o Pix Copia e Cola direto da chave
+    if not pix_copia_cola:
+        pix_copia_cola = gerar_pix_copia_cola(
+            cfg["chave_pix"],
+            valor_escolhido,
+            txid=f"VIP{dias_escolhidos}ID{servico_id}"
+        )
+
+    db.close()
+
     return render_template_string(
         HTML_PAGAR,
         servico=servico,
@@ -1896,9 +1988,80 @@ def pagar(servico_id):
         valor_escolhido=valor_escolhido,
         dias_escolhidos=dias_escolhidos,
         pix_copia_cola=pix_copia_cola,
+        mp_payment_id=mp_payment_id,
+        mp_qr_base64=mp_qr_base64,
         vagas_restantes=vagas_restantes,
         limite_vagas=LIMITE_VAGAS_VIP
     )
+
+@app.route("/api/verificar_pix/<mp_payment_id>")
+def verificar_pix(mp_payment_id):
+    """Consulta se o pagamento já foi aprovado (usado pela tela do cliente a cada 3s)."""
+    cfg = get_config()
+    db = DBWrapper()
+    pag = db.execute("SELECT * FROM pagamentos_pix WHERE mp_payment_id = ?", (mp_payment_id,)).fetchone()
+    if not pag:
+        db.close()
+        return jsonify({"pago": False})
+
+    if pag["status"] == "approved":
+        session["vip_desbloqueado"] = True
+        db.close()
+        return jsonify({"pago": True})
+
+    # Consulta ativa na API do Mercado Pago para garantir aprovação instantânea mesmo antes do webhook
+    mp_token = cfg.get("mp_access_token", "").strip()
+    if mp_token:
+        try:
+            r = requests.get(
+                f"https://api.mercadopago.com/v1/payments/{mp_payment_id}",
+                headers={"Authorization": f"Bearer {mp_token}"},
+                timeout=8
+            )
+            if r.status_code == 200 and r.json().get("status") == "approved":
+                db.execute("UPDATE pagamentos_pix SET status = 'approved' WHERE mp_payment_id = ?", (mp_payment_id,))
+                ativar_destaque_automatico(db, pag["servico_id"], pag["dias"])
+                db.commit()
+                session["vip_desbloqueado"] = True
+                db.close()
+                return jsonify({"pago": True})
+        except Exception:
+            pass
+
+    db.close()
+    return jsonify({"pago": False})
+
+@app.route("/webhook/mercadopago", methods=["POST", "GET"])
+def webhook_mercadopago():
+    """Recebe aviso automático do Mercado Pago quando o cliente paga o Pix."""
+    data = request.get_json(silent=True) or {}
+    payment_id = None
+    if isinstance(data.get("data"), dict):
+        payment_id = data["data"].get("id")
+    if not payment_id:
+        payment_id = request.args.get("data.id") or request.args.get("id")
+
+    if payment_id:
+        cfg = get_config()
+        mp_token = cfg.get("mp_access_token", "").strip()
+        if mp_token:
+            try:
+                r = requests.get(
+                    f"https://api.mercadopago.com/v1/payments/{payment_id}",
+                    headers={"Authorization": f"Bearer {mp_token}"},
+                    timeout=8
+                )
+                if r.status_code == 200 and r.json().get("status") == "approved":
+                    db = DBWrapper()
+                    pag = db.execute("SELECT * FROM pagamentos_pix WHERE mp_payment_id = ?", (str(payment_id),)).fetchone()
+                    if pag and pag["status"] != "approved":
+                        db.execute("UPDATE pagamentos_pix SET status = 'approved' WHERE mp_payment_id = ?", (str(payment_id),))
+                        ativar_destaque_automatico(db, pag["servico_id"], pag["dias"])
+                        db.commit()
+                    db.close()
+            except Exception:
+                pass
+    return "OK", 200
 
 @app.route("/admin", methods=["GET", "POST"])
 def admin():
@@ -1936,13 +2099,13 @@ def salvar_config():
     if not session.get("admin_logado"):
         return redirect(url_for("admin"))
     campos = [
-        "chave_pix", "seu_whatsapp", "valor_30d", "valor_90d",
+        "mp_access_token", "chave_pix", "seu_whatsapp", "valor_30d", "valor_90d",
         "senha_vip_clientes", "banner_ativo", "banner_titulo", "banner_texto", "banner_link"
     ]
     db = DBWrapper()
     for c in campos:
         val = request.form.get(c, "").strip()
-        if val != "":
+        if val != "" or c == "mp_access_token":
             db.execute("UPDATE config SET valor = ? WHERE chave = ?", (val, c))
     db.commit()
     db.close()
@@ -1952,9 +2115,8 @@ def salvar_config():
 def ativar_vip(servico_id, dias):
     if not session.get("admin_logado"):
         return redirect(url_for("admin"))
-    validade = (datetime.now() + timedelta(days=dias)).isoformat()
     db = DBWrapper()
-    db.execute("UPDATE servicos SET destaque_ate = ? WHERE id = ?", (validade, servico_id))
+    ativar_destaque_automatico(db, servico_id, dias)
     db.commit()
     db.close()
     return redirect(url_for("admin"))
