@@ -8,10 +8,7 @@ from flask import Flask, render_template_string, request, redirect, url_for, ses
 
 app = Flask(__name__)
 
-# =====================================================================
-# CONFIGURAÇÕES INICIAIS (SUAS CREDENCIAIS)
-# =====================================================================
-app.secret_key = "chave_secreta_vitrine_marcao_2026_pro_v3"
+app.secret_key = "chave_secreta_chama_ai_servicos_2026_v3"
 SENHA_ADMIN = "22041988"
 
 PIX_PADRAO = "997ef3d7-4a1c-436f-b4fa-2c668ad2478c"
@@ -22,7 +19,6 @@ VALOR_90D_PADRAO = "R$ 44,90"
 LIMITE_VAGAS_VIP = 4
 SENHA_CLIENTES_VIP_PADRAO = "VIP2026"
 ITENS_POR_PAGINA = 12
-# =====================================================================
 
 DATABASE_URL = os.environ.get("DATABASE_URL")
 DB_NAME = "vitrine.db"
@@ -148,8 +144,8 @@ def init_db():
         "senha_vip_clientes": SENHA_CLIENTES_VIP_PADRAO,
         "banner_ativo": "1",
         "banner_titulo": "Espaço Reservado para Patrocinador Local",
-        "banner_texto": "Divulgue sua loja ou empresa aqui para milhares de clientes de Formosa, Assis e região!",
-        "banner_link": f"https://wa.me/{WPP_PADRAO}?text=Olá!%20Tenho%20interesse%20no%20espaço%20de%20patrocinador%20do%20Guia%20de%20Serviços."
+        "banner_texto": "Divulgue sua loja ou empresa aqui para milhares de clientes de Formosa, Goioerê, Assis e região!",
+        "banner_link": f"https://wa.me/{WPP_PADRAO}?text=Olá!%20Tenho%20interesse%20no%20espaço%20de%20patrocinador%20do%20Chama%20Aí%20Serviços."
     }
     for k, v in padroes.items():
         db.execute("INSERT OR IGNORE INTO config (chave, valor) VALUES (?, ?)", (k, v))
@@ -177,7 +173,7 @@ def extrair_valor_float(valor_texto):
     except ValueError:
         return 19.90
 
-def gerar_pix_copia_cola(chave_pix, valor_texto, txid="VITRINEVIP"):
+def gerar_pix_copia_cola(chave_pix, valor_texto, txid="CHAMAAIVIP"):
     def emv(tag, val):
         return f"{tag}{len(val):02d}{val}"
 
@@ -190,7 +186,7 @@ def gerar_pix_copia_cola(chave_pix, valor_texto, txid="VITRINEVIP"):
         emv("53", "986") +
         emv("54", valor_str) +
         emv("58", "BR") +
-        emv("59", "GUIA SERVICOS") +
+        emv("59", "CHAMA AI SERVICOS") +
         emv("60", "BRASIL") +
         emv("62", emv("05", re.sub(r"[^a-zA-Z0-9]", "", txid)[:20] or "VIP")) +
         "6304"
@@ -208,7 +204,6 @@ def gerar_pix_copia_cola(chave_pix, valor_texto, txid="VITRINEVIP"):
     return f"{payload}{crc:04X}"
 
 def ativar_destaque_automatico(db, servico_id, dias):
-    """Ativa ou estende o destaque VIP no banco de dados."""
     row = db.execute("SELECT destaque_ate FROM servicos WHERE id = ?", (servico_id,)).fetchone()
     agora = datetime.now()
     base = agora
@@ -218,10 +213,6 @@ def ativar_destaque_automatico(db, servico_id, dias):
             base = atual
     nova_validade = (base + timedelta(days=int(dias))).isoformat()
     db.execute("UPDATE servicos SET destaque_ate = ? WHERE id = ?", (nova_validade, servico_id))
-
-# =====================================================================
-# CSS E TEMPLATES PROFISSIONAIS
-# =====================================================================
 
 HTML_BASE_CSS = """
 <style>
@@ -656,7 +647,6 @@ HTML_BASE_CSS = """
     .alert-error { background: #fee2e2; color: #991b1b; border: 1px solid #fecaca; }
     .alert-success { background: #dcfce7; color: #166534; border: 1px solid #bbf7d0; }
 
-    /* Modal Pop-up */
     .modal-overlay {
         display: none;
         position: fixed;
@@ -812,7 +802,7 @@ HTML_CARDS_FRAGMENT = """
                 <button onclick="abrirAvaliacao({{ item.id }}, '{{ item.titulo|replace("'", "") }}')" class="action-link">
                     ⭐ Avaliar
                 </button>
-                <a href="https://api.whatsapp.com/send?text=Olha%20esse%20profissional%20que%20encontrei:%20*{{ item.titulo }}*%20({{ item.cidade }})%20-%20{{ item.preco }}.%20Veja%20mais%20em:%20{{ url_site }}" target="_blank" class="action-link">
+                <a href="https://api.whatsapp.com/send?text=Olha%20esse%20profissional%20que%20encontrei%20no%20Chama%20Aí%20Serviços:%20*{{ item.titulo }}*%20({{ item.cidade }})%20-%20{{ item.preco }}.%20Veja%20mais%20em:%20{{ url_site }}" target="_blank" class="action-link">
                     📤 Compartilhar
                 </a>
                 <a href="/editar/{{ item.id }}" class="action-link">
@@ -838,13 +828,13 @@ HTML_INDEX = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Guia Regional de Serviços e Profissionais</title>
+    <title>Chama Aí Serviços - Profissionais da Região</title>
     """ + HTML_BASE_CSS + """
 </head>
 <body>
 
 <div class="top-bar">
-    <span>📍 Formosa do Oeste • Assis Chateaubriand • Guaíra e Região</span>
+    <span>📍 Formosa do Oeste • Goioerê • Assis Chateaubriand • Guaíra e Região</span>
     <div>
         <a href="/">Início</a>
         {% if vip_desbloqueado %}
@@ -858,7 +848,7 @@ HTML_INDEX = """
 
 <header>
     <span class="region-pill">CONECTANDO QUEM PRECISA A QUEM SABE FAZER</span>
-    <h1>Guia Regional de Serviços</h1>
+    <h1>Chama Aí Serviços</h1>
     <p>Encontre profissionais de confiança na sua cidade ou divulgue seu trabalho gratuitamente em 1 minuto.</p>
     <div class="cta-hero-group">
         <button onclick="abrirModal('modalCadastro')" class="btn-hero">
@@ -897,7 +887,6 @@ HTML_INDEX = """
         </div>
     {% endif %}
 
-    <!-- Banner de Patrocinador Local -->
     {% if cfg.banner_ativo == '1' %}
     <a href="{{ cfg.banner_link }}" target="_blank" class="sponsor-banner">
         <div>
@@ -909,7 +898,6 @@ HTML_INDEX = """
     </a>
     {% endif %}
 
-    <!-- Mural de Clientes Procurando Serviço -->
     {% if pedidos %}
     <div class="leads-section">
         <div class="leads-header">
@@ -924,7 +912,7 @@ HTML_INDEX = """
                     <p class="lead-desc">"{{ p.descricao }}"</p>
                 </div>
                 {% if vip_desbloqueado and p.wpp_link %}
-                    <a href="{{ p.wpp_link }}?text=Olá%20{{ p.cliente_nome }},%20vi%20seu%20pedido%20no%20Guia%20de%20Serviços%20e%20posso%20te%20atender!" target="_blank" class="btn-wpp" style="margin-top:0; padding:8px; font-size:13px;">
+                    <a href="{{ p.wpp_link }}?text=Olá%20{{ p.cliente_nome }},%20vi%20seu%20pedido%20no%20Chama%20Aí%20Serviços%20e%20posso%20te%20atender!" target="_blank" class="btn-wpp" style="margin-top:0; padding:8px; font-size:13px;">
                         💬 Chamar Cliente no WhatsApp
                     </a>
                 {% else %}
@@ -938,7 +926,6 @@ HTML_INDEX = """
     </div>
     {% endif %}
 
-    <!-- Barra de Busca, Cidades e Categorias -->
     <div class="search-wrapper">
         <form action="/" method="GET" class="busca-bar">
             {% if cat_atual %}<input type="hidden" name="categoria" value="{{ cat_atual }}">{% endif %}
@@ -969,7 +956,6 @@ HTML_INDEX = """
         </div>
     </div>
 
-    <!-- Faixa de Escassez de Vagas VIP -->
     <div class="scarcity-bar">
         <span>
             ⚡ <strong>Destaque no Topo:</strong>
@@ -986,7 +972,6 @@ HTML_INDEX = """
         <button onclick="abrirModal('modalCadastro')" class="btn btn-vip btn-sm">Garantir Minha Vaga</button>
     </div>
 
-    <!-- Lista de Serviços (com Paginação Leve) -->
     <div class="grid" id="gridServicos">
         {% if servicos %}
             """ + HTML_CARDS_FRAGMENT + """
@@ -1007,12 +992,11 @@ HTML_INDEX = """
     {% endif %}
 </div>
 
-<!-- MODAL 1: FORMULÁRIO DE CADASTRO DE SERVIÇO -->
 <div id="modalCadastro" class="modal-overlay">
     <div class="modal-box">
         <button onclick="fecharModal('modalCadastro')" class="modal-close">&times;</button>
         <h2 style="margin-top:0;">Divulgar Meu Trabalho</h2>
-        <p style="font-size:13px; color:var(--muted); margin-top:-10px; margin-bottom:18px;">Preencha os dados abaixo para aparecer no guia regional.</p>
+        <p style="font-size:13px; color:var(--muted); margin-top:-10px; margin-bottom:18px;">Preencha os dados abaixo para aparecer no Chama Aí Serviços.</p>
         
         <form action="/adicionar" method="POST">
             <div class="form-grid">
@@ -1042,7 +1026,7 @@ HTML_INDEX = """
                 </div>
                 <div class="form-group">
                     <label>WhatsApp (com DDD):</label>
-                    <input type="text" name="contato" required placeholder="Ex: (99) 99999-9999">
+                    <input type="text" name="contato" required placeholder="Ex: (44) 99999-9999">
                 </div>
                 <div class="form-group">
                     <label>Crie um PIN de 4 números (para editar depois):</label>
@@ -1075,7 +1059,6 @@ HTML_INDEX = """
     </div>
 </div>
 
-<!-- MODAL 2: PEDIR ORÇAMENTO URGENTE (CLIENTE) -->
 <div id="modalPedido" class="modal-overlay">
     <div class="modal-box" style="max-width: 520px;">
         <button onclick="fecharModal('modalPedido')" class="modal-close">&times;</button>
@@ -1103,7 +1086,7 @@ HTML_INDEX = """
             </div>
             <div class="form-group">
                 <label>Seu WhatsApp para receber orçamentos:</label>
-                <input type="text" name="whatsapp" required placeholder="Ex: (99) 99999-9999">
+                <input type="text" name="whatsapp" required placeholder="Ex: (44) 99999-9999">
             </div>
             <div class="form-group">
                 <label>O que você precisa? (Seja específico):</label>
@@ -1114,7 +1097,6 @@ HTML_INDEX = """
     </div>
 </div>
 
-<!-- MODAL 3: DESBLOQUEAR CONTATO DE CLIENTES (SENHA VIP) -->
 <div id="modalAcessoVip" class="modal-overlay">
     <div class="modal-box" style="max-width: 440px; text-align:center;">
         <button onclick="fecharModal('modalAcessoVip')" class="modal-close">&times;</button>
@@ -1136,7 +1118,6 @@ HTML_INDEX = """
     </div>
 </div>
 
-<!-- MODAL 4: AVALIAR PROFISSIONAL -->
 <div id="modalAvaliacao" class="modal-overlay">
     <div class="modal-box" style="max-width: 440px;">
         <button onclick="fecharModal('modalAvaliacao')" class="modal-close">&times;</button>
@@ -1244,7 +1225,7 @@ HTML_EDITAR = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Editar Meu Anúncio</title>
+    <title>Editar Meu Anúncio - Chama Aí Serviços</title>
     """ + HTML_BASE_CSS + """
 </head>
 <body>
@@ -1309,7 +1290,7 @@ HTML_EDITAR = """
             <button type="submit" class="btn" style="width:100%; padding:14px; font-size:16px;">Salvar Alterações</button>
         </form>
         <div style="text-align:center; margin-top:16px;">
-            <a href="/" style="color:var(--muted); text-decoration:none; font-size:14px;">← Cancelar e voltar para a Vitrine</a>
+            <a href="/" style="color:var(--muted); text-decoration:none; font-size:14px;">← Cancelar e voltar para o Chama Aí Serviços</a>
         </div>
     </div>
 </div>
@@ -1347,7 +1328,7 @@ HTML_PAGAR = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ativar Destaque VIP Automático</title>
+    <title>Ativar Destaque VIP - Chama Aí Serviços</title>
     """ + HTML_BASE_CSS + """
 </head>
 <body>
@@ -1364,7 +1345,7 @@ HTML_PAGAR = """
                 <strong>⚠️ Vagas VIP Esgotadas nesta Categoria!</strong><br>
                 Todas as {{ limite_vagas }} vagas de destaque para <em>{{ servico.categoria }}</em> estão ocupadas no momento.
             </div>
-            <a href="/" class="btn">← Voltar para a Vitrine</a>
+            <a href="/" class="btn">← Voltar para o Chama Aí Serviços</a>
         {% else %}
             <p style="font-size:14px; color:#475569;">Restam apenas <strong>{{ vagas_restantes }} vagas VIP</strong> para <em>{{ servico.categoria }}</em>. Escolha a duração:</p>
 
@@ -1414,13 +1395,13 @@ HTML_PAGAR = """
                 </script>
             {% else %}
                 <p style="font-size:14px; color:#475569;">Após o pagamento, envie o comprovante para liberar seu destaque:</p>
-                <a href="https://wa.me/{{ cfg.seu_whatsapp }}?text=Olá!%20Acabei%20de%20fazer%20o%20Pix%20de%20{{ valor_escolhido }}%20(Plano%20{{ dias_escolhidos }}%20dias)%20para%20destacar%20o%20anúncio%20ID%20%23{{ servico.id }}%20({{ servico.titulo }}).%20Segue%20o%20comprovante:" target="_blank" class="btn btn-vip" style="width:100%; padding:14px; font-size:16px;">
+                <a href="https://wa.me/{{ cfg.seu_whatsapp }}?text=Olá!%20Acabei%20de%20fazer%20o%20Pix%20de%20{{ valor_escolhido }}%20(Plano%20{{ dias_escolhidos }}%20dias)%20para%20destacar%20o%20anúncio%20ID%20%23{{ servico.id }}%20({{ servico.titulo }})%20no%20Chama%20Aí%20Serviços.%20Segue%20o%20comprovante:" target="_blank" class="btn btn-vip" style="width:100%; padding:14px; font-size:16px;">
                     Enviar Comprovante no WhatsApp
                 </a>
             {% endif %}
             
             <br><br>
-            <a href="/" style="color:var(--muted); text-decoration:none; font-size:14px;">← Voltar para a Vitrine</a>
+            <a href="/" style="color:var(--muted); text-decoration:none; font-size:14px;">← Voltar para o Chama Aí Serviços</a>
         {% endif %}
     </div>
 </div>
@@ -1443,7 +1424,7 @@ HTML_ADMIN = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Painel Administrativo</title>
+    <title>Painel Administrativo - Chama Aí Serviços</title>
     """ + HTML_BASE_CSS + """
     <style>
         table { width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 14px; }
@@ -1453,7 +1434,7 @@ HTML_ADMIN = """
 </head>
 <body>
 <div class="top-bar">
-    <span>Administração do Guia Regional</span>
+    <span>Administração — Chama Aí Serviços</span>
     <div>
         <a href="/">Ver Site</a>
         {% if logado %}<a href="/admin/logout">Sair</a>{% endif %}
@@ -1477,7 +1458,6 @@ HTML_ADMIN = """
             </form>
         </div>
     {% else %}
-        <!-- Configurações de Lucro e Automação -->
         <div class="card-box">
             <h2 style="margin-top:0;">Configurações de Lucro, Automação Pix e Patrocinador</h2>
             {% if salvo %}<p style="color:var(--accent); font-weight:bold;">✓ Configurações salvas com sucesso!</p>{% endif %}
@@ -1532,7 +1512,6 @@ HTML_ADMIN = """
             </form>
         </div>
 
-        <!-- Tabela de Anúncios -->
         <div class="card-box" style="overflow-x:auto;">
             <h2 style="margin-top:0;">Profissionais Cadastrados ({{ servicos|length }})</h2>
             <table>
@@ -1580,7 +1559,6 @@ HTML_ADMIN = """
             </table>
         </div>
 
-        <!-- Tabela de Pedidos de Orçamento -->
         <div class="card-box" style="overflow-x:auto;">
             <h2 style="margin-top:0;">Pedidos de Orçamento de Clientes ({{ pedidos|length }})</h2>
             <table>
@@ -1613,10 +1591,6 @@ HTML_ADMIN = """
 </body>
 </html>
 """
-
-# =====================================================================
-# FUNÇÃO AUXILIAR PARA BUSCAR E PAGINAR SERVIÇOS
-# =====================================================================
 
 def obter_servicos_paginados(db, categoria, cidade, busca, pagina, contar_views=True):
     todos_rows = db.execute("SELECT id, cidade, categoria, destaque_ate FROM servicos").fetchall()
@@ -1688,10 +1662,6 @@ def obter_servicos_paginados(db, categoria, cidade, busca, pagina, contar_views=
         db.commit()
 
     return fatia, tem_mais, len(todos_rows), sorted(list(cidades_set)), vips_por_cat
-
-# =====================================================================
-# ROTAS DO SISTEMA
-# =====================================================================
 
 @app.route("/ping")
 def ping():
@@ -1784,7 +1754,7 @@ def abrir_whatsapp(servico_id):
     if not wpp_base:
         return redirect(url_for("index"))
 
-    texto = quote(f"Olá {servico['nome']}, vi seu anúncio no Guia Regional de Serviços!")
+    texto = quote(f"Olá {servico['nome']}, vi seu anúncio no Chama Aí Serviços!")
     return redirect(f"{wpp_base}?text={texto}")
 
 @app.route("/adicionar", methods=["POST"])
@@ -1934,21 +1904,20 @@ def pagar(servico_id):
     mp_qr_base64 = None
     pix_copia_cola = ""
 
-    # Se o Access Token do Mercado Pago estiver configurado, cria Pix automático com baixa instantânea
     if mp_token and vagas_restantes > 0:
         try:
             webhook_url = request.url_root.rstrip("/") + "/webhook/mercadopago"
             headers = {
                 "Authorization": f"Bearer {mp_token}",
                 "Content-Type": "application/json",
-                "X-Idempotency-Key": f"vitrine-{servico_id}-{dias_escolhidos}-{int(agora.timestamp())}"
+                "X-Idempotency-Key": f"chamaai-{servico_id}-{dias_escolhidos}-{int(agora.timestamp())}"
             }
             payload_mp = {
                 "transaction_amount": valor_float,
-                "description": f"Destaque VIP {dias_escolhidos}d - Anuncio #{servico_id}",
+                "description": f"Destaque VIP {dias_escolhidos}d - Chama Ai #{servico_id}",
                 "payment_method_id": "pix",
                 "payer": {
-                    "email": f"anuncio{servico_id}@vitrineservicos.com.br",
+                    "email": f"anuncio{servico_id}@chamaaiservicos.com.br",
                     "first_name": servico["nome"][:30]
                 },
                 "notification_url": webhook_url,
@@ -1970,7 +1939,6 @@ def pagar(servico_id):
         except Exception:
             mp_payment_id = None
 
-    # Plano B: Se não tiver Mercado Pago configurado, usa o Pix Copia e Cola direto da chave
     if not pix_copia_cola:
         pix_copia_cola = gerar_pix_copia_cola(
             cfg["chave_pix"],
@@ -1996,7 +1964,6 @@ def pagar(servico_id):
 
 @app.route("/api/verificar_pix/<mp_payment_id>")
 def verificar_pix(mp_payment_id):
-    """Consulta se o pagamento já foi aprovado (usado pela tela do cliente a cada 3s)."""
     cfg = get_config()
     db = DBWrapper()
     pag = db.execute("SELECT * FROM pagamentos_pix WHERE mp_payment_id = ?", (mp_payment_id,)).fetchone()
@@ -2009,7 +1976,6 @@ def verificar_pix(mp_payment_id):
         db.close()
         return jsonify({"pago": True})
 
-    # Consulta ativa na API do Mercado Pago para garantir aprovação instantânea mesmo antes do webhook
     mp_token = cfg.get("mp_access_token", "").strip()
     if mp_token:
         try:
@@ -2033,7 +1999,6 @@ def verificar_pix(mp_payment_id):
 
 @app.route("/webhook/mercadopago", methods=["POST", "GET"])
 def webhook_mercadopago():
-    """Recebe aviso automático do Mercado Pago quando o cliente paga o Pix."""
     data = request.get_json(silent=True) or {}
     payment_id = None
     if isinstance(data.get("data"), dict):
